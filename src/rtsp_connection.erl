@@ -464,6 +464,9 @@ get_request_info(Request, Headers) ->
 %%       Result = false | {SessionPid, SessionPath}
 %% @end
 %% ----------------------------------------------------------------------------
+find_session([$/]) -> 
+  false;
+
 find_session(Path) ->
   case ems_session_manager:get_session_process(Path) of
     false -> 
@@ -474,10 +477,7 @@ find_session(Path) ->
           find_session(SubPath)
       end;
     Pid -> {Pid, Path} 
-  end;
-  
-find_session([$/]) -> 
-  false.
+  end.
 
 %% ----------------------------------------------------------------------------
 %% @doc Maps an ems session error reason to an appropriate RTSP status code.

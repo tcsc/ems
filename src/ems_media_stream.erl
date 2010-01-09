@@ -2,7 +2,7 @@
 
 -record(stream_state, {}).
 
--export([new/1]).
+-export([new/0]).
 
 new() ->
   #stream_state{}.

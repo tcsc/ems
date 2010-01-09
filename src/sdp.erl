@@ -42,13 +42,20 @@ extract_attributes(Lines) ->
     AttributeList).
     
 %% ----------------------------------------------------------------------------
-%%
+%% @doc Scans the semi-parsed list of SDP lines and builds a list of the 
+%%      rtp_map records.
+%% @spec extract_rtp_map(Lines) -> RtpMap
+%%         Lines = [Line]
+%%         Line = rtp_map() | media_stream() | term() 
+%%         RtpMap = [RtpMapEntry]
+%%         RtpMapEntry = {int(), rtp_map()}
+%% @end
 %% ----------------------------------------------------------------------------
 extract_rtp_map(Lines) ->
   lists:map(
     fun(Item) -> 
-      ID = Item#rtp_map.id,
-      {id, Item}
+      Id = Item#rtp_map.id,
+      {Id, Item}
     end,
     lists:filter(fun(Item) -> is_record(Item,rtp_map) end, Lines)).
   

@@ -1,11 +1,12 @@
 -module(ems_session).
 -behaviour(gen_server).
 -include("erlang_media_server.hrl").
+-include ("sdp.hrl").
 
 %% ============================================================================
 %% Definitions
 %% ============================================================================
--record(session_state, {id, path, description}).
+-record(state, {id, path, description, channels}).
 
 %% ============================================================================
 %% gen_server callbacks
@@ -31,11 +32,11 @@
 %% @spec start_link(Id, Path, Desc) -> Pid
 %%       Id = integer()
 %%       Path = string()
-%%       Desc = SDP session  description
+%%       Desc = SDP session description
 %% @end
 %% ----------------------------------------------------------------------------
 start_link(Id, Path, Desc) ->
-  ?LOG_DEBUG("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
+  ?LOG_DEBUG("ems_session:start_link/3 - Id: ~w, Path: ~s", [Id, Path]),
   gen_server:start_link(?MODULE, {Id, Path, Desc}, []).
   
 %% ----------------------------------------------------------------------------
@@ -59,7 +60,8 @@ setup_stream(SessionPid, StreamName, Transport) ->
 
 init({Id, Path, Desc}) ->
   ?LOG_DEBUG("ems_session:init/2 - ~s", [Path]),
-  State = #session_state{id=Id, path=Path, description=Desc},
+	{ok, Channels} = create_channels(Desc),
+  State = #state{id=Id, path=Path, description=Desc, channels=Channels},
   {ok, State}.
   
 %% ----------------------------------------------------------------------------
@@ -126,6 +128,34 @@ code_change(OldVersion, State, Extra) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
+%% @doc Creates RTP distribution channels for each stream in the session
+%%      description.
+%% @spec create_channels(Desc) -> Result
+%%       Desc = sdp_stream_description()
+%%       Result = {ok, ChannelMap} | error
+%%       ChannelMap = dictionary()  
+%% @end
+%% ----------------------------------------------------------------------------
+create_channels(_Desc = #session_description{streams=Streams, 
+                                             rtp_map = RtpMap,
+                                             format_map = Formats}) ->
+  Result = lists:map(
+		fun (Stream = #media_stream{format = FormatIndex}) ->
+		  RtpMapEntry = case lists:keyfind(FormatIndex, 1, RtpMap) of
+        false -> throw({ems_session, missing_rtpmap_entry});
+        RtpMap1 -> RtpMap1
+      end,
+			
+			case ems_channel:start_link(Stream, RtpMapEntry) of
+			  {ok, Channel} -> Channel
+			end,
+			
+			{Stream#media_stream.control_uri, Channel}
+		end,
+	  Streams),
+	{ok, dict:from_list(Result)}.
+	
+%% ----------------------------------------------------------------------------
 %% @doc Sets up an RTP data stream
 %% @spec setup_stream(Direction, StreamName, Transport, State) -> Result
 %%       Direction = inbound | outbound
@@ -139,9 +169,9 @@ code_change(OldVersion, State, Extra) ->
 % Handles the inbound stream case - setting up the stream manager and getting it
 % ready to receive RTP data from the broadcaster
 setup_stream(inbound, StreamName, TransportSpec, State) ->
-  case fetch_stream(StreamName, State) of 
-    {ok, _} -> throw({ems_session,already_exists});
-    false -> ok
+  case dict:find(StreamName, State#state.channels) of
+    {ok, Channel} -> ok;
+    error -> throw({ems_server, not_found})
   end,
   
   {Transport, ServerSpec} = case transport_type(TransportSpec) of

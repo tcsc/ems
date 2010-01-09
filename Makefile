@@ -24,10 +24,11 @@ APP_SRC=$(ESRC)/$(APP_NAME).app.src
 all: $(EBIN) $(BEAMS) $(APP_TARGET)
 
 debug: all
-	erl -pa ebin -smp auto -run debugger -run appmon -run ems
+	erl -pa ebin -smp auto -run debugger -run ems
+	# -run appmon 
 	# -noshell
 	
-# Note: In the open-source build clean must not destroy the preloaded
+# Note: In the open-source, build clean must not destroy the preloaded
 # beam files.
 clean:
 	rm -f $(TARGET_FILES)
