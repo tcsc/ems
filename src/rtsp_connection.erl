@@ -413,11 +413,13 @@ handle_setup(Request, Headers, Body, State) ->
           % transport spec off to the session for processing
           ClientTransport = rtsp:parse_transport(ClientHeader),      
           case ems_session:setup_stream(SessionPid, StreamName, ClientTransport) of
-
-            ServerTransport when is_list(ServerTransport) ->
+            
+            {ok, ServerTransport} when is_list(ServerTransport) ->
               % right - the session liked the transport and has set up the 
               % stream for us. Now we need to format the server-side transport
-              % spec and send it back to the client in the RTSP response  
+              % spec and send it back to the client in the RTSP response
+              ?LOG_DEBUG("rtsp_connection:handle_setup/4 - server transport is ~w", [ServerTransport]),
+                
               ServerHeader = rtsp:format_transport(ServerTransport),
               {ok, [{?RTSP_TRANSPORT, ServerHeader}], << >>, State};
               

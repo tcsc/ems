@@ -1,7 +1,7 @@
 -module (ems_channel).
 -include ("erlang_media_server.hrl").
 -include ("sdp.hrl").
--record (state, {pid, stream, rtpmap}).
+-record (state, {pid, stream, rtpmap, receiver_pid}).
 -behaviour (gen_server).
 
 %% ============================================================================
@@ -16,7 +16,7 @@
   code_change/3
 	]).
 	
--export ([start_link/2, subscribe/3, notify/2]).
+-export ([start_link/2, configure_input/2]).
 
 %% ============================================================================
 %% @doc Creates and starts a new media distribution channel
@@ -34,27 +34,19 @@ start_link(Stream, RtpMap) ->
 	end.
 
 %% ============================================================================
-%% @doc Notifies all the subscribed event handlers of an event
-%% @spec notify(State,Event) ->
-%%         State = Opaque state data, as returned from start_link/1,
-%%         Event = term()
+%% @doc Configures the chanel with the given settings 
+%% @spec configure_input(Pid, TransportSpec) -> {ok, ServerTransportSpec} 
 %% @end 
 %% ============================================================================
-notify(_State = #state{pid=Pid}, Event) ->
-	gen_event:notify(Pid, Event).
-	
-%% ============================================================================
-%% @doc Creates a new event handler from the supplied module and binds it to
-%%      the event manager.
-%% @spec subscribe(State,Module,Args) ->
-%%         State = Opaque state data as returned from start_link/1
-%%         Module = 
-%%         Args = list() 
-%% @end
-%% ============================================================================
-subscribe(_State = #state{pid=Pid}, Module, Args) ->
-	gen_event:add_handler(Pid, Module, Args).
-	
+configure_input(Pid, Transport) ->
+  try
+    {ok, ServerTransportSpec} = gen_server:call(Pid, {configure, Transport}),
+    {ok, ServerTransportSpec}
+  catch
+    exit:{timeout,_} -> {error, timeout};
+	  _Type:Err -> {error, Err}
+  end.
+  
 %% ============================================================================
 %% gen_server callbacks
 %% ============================================================================
@@ -73,6 +65,18 @@ init(Args = #state{stream=Stream, rtpmap=RtpMap}) ->
 %% @spec handle_call(Request,From,State) -> {noreply, State}
 %% @end
 %% ----------------------------------------------------------------------------
+handle_call({configure, TransportSpec}, _From, State) ->
+  ?LOG_DEBUG("ems_channel:handle_call/3 - handling stream configure", []),
+  {RtpReceiverPid, {RtpPort, RtcpPort}} = rtp_receiver:start_link(TransportSpec),
+  
+  ?LOG_DEBUG("ems_channel:handle_call/3 - Pid: ~w, ports: ~w-~w", [RtpReceiverPid, 
+    RtpPort, RtcpPort]),
+  ServerTransportSpec = [{server_port, [RtpPort, RtcpPort]} | TransportSpec],
+
+  ?LOG_DEBUG("ems_channel:handle_call/3 - Server Transport Spec: ~w", [ServerTransportSpec]),  
+  NewState = State#state{receiver_pid = RtpReceiverPid},
+  {reply, {ok, ServerTransportSpec}, NewState};
+  
 handle_call(_Request, _From, State) ->
 	?LOG_DEBUG("ems_channel:handle_call/3",[]),
 	{noreply, State}.

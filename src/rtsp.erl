@@ -87,6 +87,7 @@ parse_transport([ItemText|Remainder], Result) ->
     "port"        -> {port, parse_number_list(Value)};
     "layers"      -> {layers, Value};
     "ssrc"        -> {sync_source, Value};
+    "source"      -> {source, Value};
     "append"      -> append;
     _             -> {Name,Value}
   end,
@@ -172,6 +173,22 @@ parse_number_list(Text) when is_list(Text) ->
     error:badarg -> throw({rtsp_error, bad_request})
   end.
   
+%% -----------------------------------------------------------------------------
+%%
+%% -----------------------------------------------------------------------------
+format_number_list(Numbers) ->
+  format_number_list(Numbers, []).
+  
+%% -----------------------------------------------------------------------------
+%%
+%% -----------------------------------------------------------------------------
+format_number_list( [Number | Remainder], Result) ->
+  Text = io_lib:format("~w", [Number]),
+  format_number_list( Remainder, [Text | Result]);
+  
+format_number_list([], Result) ->
+  string:join( lists:reverse(Result), "-").
+
 %% -----------------------------------------------------------------------------
 %% @doc Formats an RTSP message for sending
 %% @spec format_message(Message,Headers,Body) -> Result
@@ -381,14 +398,122 @@ format_header([Value]) ->
 format_header([Value|Remainder]) ->
   Value ++ ", " ++ format_header(Remainder).
 
-
 %% ----------------------------------------------------------------------------  
 %% @doc Formats a trasport spec as an RTSP transport header
-%% @wnd
+%% @spec format_transport(TransportSpec) -> Result
+%%         TransportSpec = [TransportOption]
+%%         TransportOption = atom() | {Name, Value}
+%%         Name = Value = string() | atom()
+%%         Result = string()
+%% @end
 %% ----------------------------------------------------------------------------  
 format_transport(TransportSpec) ->
-  "RTP/AVP".
+  {protocol, Protocol} = lists:keyfind(protocol, 1, TransportSpec),
+  {profile, Profile} = lists:keyfind(profile, 1, TransportSpec),
+  
+  LowerTransport = case lists:keyfind(lower_transport, 1, TransportSpec) of
+    {lower_transport, T} ->
+      io_lib:format("/~s", [format_lower_transport(T)]);
+      
+    _ -> ""
+  end,
+  
+  Attributes = lists:keydelete(profile, 1, 
+    lists:keydelete(protocol, 1, TransportSpec)),
 
+  io_lib:format("~s/~s~s;~s", [
+    format_protocol(Protocol), 
+    format_profile(Profile), 
+    LowerTransport, 
+    format_transport_attributes(Attributes)]).
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------  
+format_transport_attributes(AttributeList) ->
+  String = format_transport_attributes(AttributeList, []).
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+format_transport_attributes([Attribute|Remainder], Result) ->
+  Text = case format_single_attribute(Attribute) of
+    {Name,Value} -> io_lib:format("~s=~s", [Name, Value]);
+    F -> F
+  end, 
+  format_transport_attributes(Remainder, [Text | Result]);
+  
+format_transport_attributes([],Result) ->
+  string:join(Result, ";").
+
+%% ----------------------------------------------------------------------------  
+%% @doc Translates a single element of a transport header, returning either
+%%      the single attribute, or a 2-element tuple describing a name/value
+%%      pair.
+%%
+%% @spec format_single_attribute(Attribute) -> Result 
+%%         Result = string() | {Name, Value}
+%%         Name = Value = string().
+%% @end
+%% ----------------------------------------------------------------------------  
+format_single_attribute(Attribute) ->
+  case Attribute of
+    multicast                  -> "multicast";
+    unicast                    -> "unicast";
+    append                     -> "append";
+    {interleaved, Channels}    -> {"interleaved", format_number_list(Channels)};
+    {client_port, ClientPorts} -> {"client_port", format_number_list(ClientPorts)};
+    {server_port, ServerPorts} -> {"server_port", format_number_list(ServerPorts)};
+    {source, Source}           -> {"source", Source};
+    {ssrc, SyncSrc}            -> {"ssrc", SyncSrc};
+    {direction, Direction}     -> {"mode", format_transport_mode(Direction)};
+    {layers, Layers}           -> {"layers", Layers};
+    {ttl, TimeToLive}          -> {"ttl", TimeToLive};
+    {Name,Value}               -> {Name, Value}
+  end.  
+
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+format_protocol(Protocol) ->
+  case Protocol of 
+    rtp -> "RTP";
+    _ -> Protocol
+  end.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+format_profile(Profile) ->
+  case Profile of 
+    avp -> "AVP";
+    ProfileName -> ProfileName
+  end.
+  
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+format_lower_transport(Transport) ->
+  case Transport of 
+    tcp -> "TCP";
+    udp -> "TCP";
+    _ -> Transport
+  end.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------  
+format_transport_mode(Mode) ->
+  case Mode of 
+    inbound -> "receive";
+    outbound -> "play";
+    _ -> Mode
+  end.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
 translate_status(Status) ->
   case Status of
     ok                    -> {200, "OK"};

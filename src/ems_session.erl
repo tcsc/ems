@@ -43,6 +43,9 @@ start_link(Id, Path, Desc) ->
 %% @doc Sets up a new stream, returning a new transport definition for the
 %%      caller to return to the client.
 %% @spec stream_setup(SessionPid, StreamName, Transport) -> Result
+%%         Result = {ok, ServerTransport}
+%%         Transport = ServerTransport = TransportSpec
+%%         TrasportSpec = [TransportOption]
 %% @end
 %% ----------------------------------------------------------------------------
 setup_stream(SessionPid, StreamName, Transport) ->
@@ -80,17 +83,14 @@ handle_call({setup_stream, StreamName, Transport}, From, State) ->
     [StreamName, Transport]),
     
   try
-    {Result, NewState} = case lists:keysearch(direction, 1, Transport) of
-      {value, {direction, inbound}} -> 
-        setup_stream(inbound, StreamName, Transport, State);
-        
-      {value, {direction, outbound}} -> 
-        setup_stream(outbound, StreamName, Transport, State);
-        
+    case lists:keysearch(direction, 1, Transport) of
+      {value, {direction, Direction}} -> 
+        {ServerTransportSpec, NewState} = setup_stream(Direction, StreamName, Transport, State),
+        {reply, {ok, ServerTransportSpec}, NewState};
+
       _ -> 
         throw({ems_session,unsupported_transport})
-    end,
-    {reply, Result, NewState}
+    end
   catch
     {ems_session, Reason} -> {reply, {error, Reason}, State}
   end;
@@ -147,10 +147,10 @@ create_channels(_Desc = #session_description{streams=Streams,
       end,
 			
 			case ems_channel:start_link(Stream, RtpMapEntry) of
-			  {ok, Channel} -> Channel
+			  {ok, ChannelPid} -> ChannelPid
 			end,
 			
-			{Stream#media_stream.control_uri, Channel}
+			{Stream#media_stream.control_uri, ChannelPid}
 		end,
 	  Streams),
 	{ok, dict:from_list(Result)}.
@@ -166,23 +166,17 @@ create_channels(_Desc = #session_description{streams=Streams,
 %% @end
 %% ----------------------------------------------------------------------------  
 
-% Handles the inbound stream case - setting up the stream manager and getting it
-% ready to receive RTP data from the broadcaster
+% Handles the inbound stream case - setting up the stream manager and getting
+% it ready to receive RTP data from the broadcaster
 setup_stream(inbound, StreamName, TransportSpec, State) ->
   case dict:find(StreamName, State#state.channels) of
-    {ok, Channel} -> ok;
-    error -> throw({ems_server, not_found})
-  end,
-  
-  {Transport, ServerSpec} = case transport_type(TransportSpec) of
-    unicast ->
-      T = udp_transport:new(TransportSpec),
-      S = udp_transport:get_spec(T),
-      {T,S};
-    _ -> 
-      throw({ems_server,unsupported_transport})
-  end,
-  {ServerSpec, State};
+    {ok, ChannelPid} -> 
+      {ok, ServerTransportSpec} = ems_channel:configure_input(ChannelPid, TransportSpec),
+      {ServerTransportSpec, State};
+      
+    error -> 
+      throw({ems_server, not_found})
+  end;
   
 setup_stream(outbound, StreamName, Transport, State) ->
   {[], State}.
