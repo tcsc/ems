@@ -21,7 +21,7 @@
 %% ============================================================================
 %% Utility Exports
 %% ============================================================================
--export([get_header/2]).
+-export([get_header/2, get_request_info/2]).
 
 %% ============================================================================
 %% Definitions
@@ -247,7 +247,7 @@ parse_request_line(Data) ->
       % the line is a valid request line, so we build a valid request 
       % record and return it
       Request = #rtsp_request{
-        method = Method,
+        method = parse_method(Method),
         uri = Uri, 
         version = {
           list_to_integer([VerMajor]),
@@ -259,6 +259,22 @@ parse_request_line(Data) ->
       throw({error, bad_request})
   end.
 
+%% -----------------------------------------------------------------------------
+%% @spec parse_method(MethodName) -> Method | MethodName
+%%         Method = options | announce | describe | setup | play | teardown
+%% @end 
+%% -----------------------------------------------------------------------------
+parse_method(MethodName) ->
+  case MethodName of
+    "OPTIONS" -> options;
+    "ANNOUNCE" -> announce;
+    "DESCRIBE" -> describe;
+    "SETUP" -> setup;
+    "PLAY" -> play;
+    "TEARDOWN" -> teardown;
+    _ -> MethodName
+  end.
+  
 %% -----------------------------------------------------------------------------
 %%
 %% -----------------------------------------------------------------------------  
@@ -421,11 +437,11 @@ format_transport(TransportSpec) ->
   Attributes = lists:keydelete(profile, 1, 
     lists:keydelete(protocol, 1, TransportSpec)),
 
-  io_lib:format("~s/~s~s;~s", [
+  lists:flatten(io_lib:format("~s/~s~s;~s", [
     format_protocol(Protocol), 
     format_profile(Profile), 
     LowerTransport, 
-    format_transport_attributes(Attributes)]).
+    format_transport_attributes(Attributes)])).
 
 %% ----------------------------------------------------------------------------
 %%
@@ -520,8 +536,32 @@ translate_status(Status) ->
     bad_request           -> {400, "Bad Request"};
     not_found             -> {404, "Not Found"};
     length_required       -> {411, "Length Required"};
+    method_not_valid      -> {455, "Method Not Valid in this State"};
     unsupported_transport -> {461, "Unsupported transport"};
     internal_server_error -> {500, "Internal Server Error"};
     not_implemented       -> {501, "Not Implemented"};
     service_unavailable   -> {503, "Service Unavailable"}
   end.
+
+%% ----------------------------------------------------------------------------
+%% @doc Extracts some commonly-used bits out of an RTSP request and returns 
+%%      them to the caller.
+%% @spec get_request_info(Request, Headers) -> Result
+%%         Request = rtsp_request()
+%%         Headers = rtsp_message_header()
+%%         Result = {Method, Uri, Sequence, ContentLength, ContentType}
+%%         Method = announce | options | setup | play | teardown | string()
+%%         Uri = string()
+%%         Sequence = int()
+%%         ContentLength = int()
+%%         ContentType = string()
+%% @end
+%% ----------------------------------------------------------------------------  
+get_request_info(Request, Headers) ->
+  Method = Request#rtsp_request.method,
+  Uri = Request#rtsp_request.uri,
+  Sequence = Headers#rtsp_message_header.sequence,
+  ContentLength = Headers#rtsp_message_header.content_length,
+  ContentType = Headers#rtsp_message_header.content_type,
+  {Method, Uri, Sequence, ContentLength, ContentType}.
+  

@@ -19,11 +19,13 @@
     terminate/2, 
     code_change/3
 	]).
+	
+-export([receive_rtsp_request/4]).
 
 %% ============================================================================
 %% External Functions
 %% ============================================================================
--export([start_link/0, create_session/2, get_session_process/1]).
+-export([start_link/0, get_session_process/1]).
 
 %% ============================================================================
 %% Public Interface
@@ -38,41 +40,18 @@ start_link() ->
   gen_server:start_link({local,ems_session_manager}, ?MODULE, {}, []).
 
 %% ----------------------------------------------------------------------------
-%% @doc
-%% @spec create_session(Path, Desc) -> Result
-%%       Result -> {error, Reason} | {ok, Pid}
-%%       Reason -> timeout | ErrorContext 
+%% @doc Receives an RTSP request from the connection, does some preliminary
+%%      parsing on the request and flings the semi-parsed results at the
+%%      session manager process. 
 %% @end
 %% ----------------------------------------------------------------------------
-create_session(Path, Desc) ->
-  try 
-    case gen_server:call(ems_session_manager, {create_session, Path, Desc}) of
-      {ok, Session} -> {ok, Session};
-      {error, already_exists} -> {error, already_exists};
-      {error, Reason} -> {error, Reason}
-    end
-  catch
-    exit:{timeout,_} -> {error, timeout};
-    _Type:Err -> {error, Err}
-  end.
+receive_rtsp_request(Sequence, Request, Headers, Body) ->
+  {Method, Uri, _, _, _} = rtsp:get_request_info(Request, Headers),
+  ?LOG_DEBUG("ems_session_manager:receive_rtsp_request/4 - receving ~w ~s", 
+    [Method, Uri]),
+  gen_server:cast(ems_session_manager,
+    {rtsp_request, self(),  {Method, Uri, Sequence, Request, Headers, Body}}).
 
-%% ----------------------------------------------------------------------------
-%% @doc Maps a uri to a given session process.
-%% @spec get_session_process(Path) -> false | Pid
-%%       Path = string()
-%%       Pid = pid()
-%% @end
-%% ----------------------------------------------------------------------------
-get_session_process(Path) ->
-  case find_session_by_uri(Path) of
-    Session when is_record(Session, session_info) ->
-      Session#session_info.pid;
-    
-    false -> false;
-    
-    Any -> false
-  end.
-  
 %% ============================================================================
 %% Server Callbacks
 %% ============================================================================
@@ -96,10 +75,6 @@ init(_Args) ->
 %% @doc Handles a synchronous request
 %% @end
 %% ----------------------------------------------------------------------------
-
-handle_call({create_session, Path, Desc}, _From, State) ->
-  ?LOG_DEBUG("ems_session_manager:handle_call/3 - create_session ~s",[Path]),  
-  {reply, internal_create_session(Path, Desc), State};
   
 % the default implementation - does nothing
 handle_call(_Request, _From, State) ->
@@ -109,6 +84,11 @@ handle_call(_Request, _From, State) ->
 %% @doc Handles an asynchronous request
 %% @end
 %% ----------------------------------------------------------------------------
+
+handle_cast({rtsp_request, SenderPid, RequestArgs}, State ) ->
+  {Method, Uri, Sequence, Request, Headers, Body} = RequestArgs,
+  NewState = handle_request(Method, Uri, Sequence, Request, Headers, Body, SenderPid, State),
+  {noreply, NewState};
 
 % The default implementation. Does nothing.
 handle_cast(_Request, State) ->
@@ -144,6 +124,43 @@ code_change(_OldVersion, State, _Extra) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
+%% @doc Looks up the session associated with the url and forwards the request
+%%      to it. In some circumstances (e.g. an RTSP ANNOUNCE) this method will
+%%      create the session first.
+%% @end
+%% ----------------------------------------------------------------------------
+
+%% Specific RTSP ANNOUNCE case - the session will be created before being
+%% passed the request
+handle_request(announce, Uri, Sequence, Request, Headers, Body, SenderPid, State) ->
+  case create_session(Uri, self()) of
+    {ok, Pid} ->
+      ems_session:receive_rtsp_request(Pid, Request, Headers, Body, SenderPid);
+      
+    {error, already_exists} ->
+      rtsp_connection:send_response(SenderPid, Sequence, method_not_valid, [], <<>>)
+  end,
+  State;
+
+%% The generic case - the request is simply passed on to the session 
+%% (if it exists)
+handle_request(_Method, Uri, Sequence, Request, Headers, Body, SenderPid, State) ->
+  case lookup_session_process(Uri) of 
+    {false, Reason} ->
+      Status = case Reason of
+        not_found -> not_found;
+        invalid_path -> bad_request;
+        
+        _ -> server_error
+      end,
+      rtsp_connection:send_response(SenderPid, Sequence, Status, [], <<>>);
+    
+    Pid -> 
+      ems_session:receive_rtsp_request(Pid, Request, Headers, Body, SenderPid)
+  end,
+  State.
+  
+%% ----------------------------------------------------------------------------
 %% @doc Does the actual work of creating a session in response to a
 %%      create_session message
 %% @spec internal_create_session(Uri,Desc) -> {ok, Pid} | {error, Reason}
@@ -153,31 +170,59 @@ code_change(_OldVersion, State, _Extra) ->
 %%       Reason = already_exists 
 %% @end
 %% ----------------------------------------------------------------------------
-internal_create_session(Path, Desc) ->
-  case find_session_by_uri(Path) of
+create_session(Path, Owner) ->
+  case lookup_session_process(Path) of
     Session when is_record(Session, session_info) ->
       ?LOG_DEBUG("ems_session_manager: session already exists on this url", []),
       {error, already_exists};
       
     false -> 
       Id = random:uniform(99999999),
-      {ok, Pid} = ems_session:start_link(Id, Path, Desc),
+      {ok, Pid} = ems_session:start_link(Id, Path, Owner),
 
       ?LOG_DEBUG("ems_session_manager: New session id ~w on process ~w", [Id, Pid]),
       ets:insert(ems_session_list, #session_info{path = Path, id = Id, pid = Pid} ),
       
       {ok, Pid}
   end.
-    
+
 %% ----------------------------------------------------------------------------
-%% @doc Finds a session process using its uri as a key
-%% @spec find_session_by_uri(Uri) -> false | Pid
-%%       Uri = string()
-%%       Pid = pid()
+%% @doc Finds a session by recursively trying each sub path - i.e. first it 
+%%      tries the full path, then (if no session is found on the full path) it 
+%%      tries the path minus everything after the last separator, and so on.  
+%% @spec find_session(Path) -> Result
+%%       Result = false | {SessionPid, SessionPath}
 %% @end
 %% ----------------------------------------------------------------------------
-find_session_by_uri(Uri) ->
+lookup_session_process([$/]) -> 
+  false;
+
+lookup_session_process(Path) ->
+  case get_session_process(Path) of
+    {false, not_found} -> 
+      case string:rchr(Path, $/) of
+        0 -> false;
+        N -> 
+          SubPath = string:substr(Path,1,N-1),
+          lookup_session_process(SubPath)
+      end;
+
+    Pid -> {Pid, Path} 
+  end.
+
+%% ----------------------------------------------------------------------------
+%% @doc Finds a session process using its uri as a key
+%% @spec get_session(Uri) -> {error, Reason} | SessionPid
+%%       Uri = string()
+%%       SessionPid = pid()
+%%       Reason = not_found | invalid_path
+%% @end
+%% ----------------------------------------------------------------------------
+get_session_process($/) ->
+  {false, invalid_path };
+  
+get_session_process(Uri) ->
   case ets:lookup(ems_session_list, Uri) of
     [Session|_] -> Session;
-    [] -> false
+    [] -> {false, not_found}
   end.

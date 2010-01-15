@@ -210,7 +210,9 @@ parse_line([$b, $= | Line]) ->
       
     [Modifier, Value] -> 
       {bandwidth_info, Modifier, list_to_integer(Value)}
-  end.
+  end;
+  
+parse_line([]) -> {}.
 
 %% ----------------------------------------------------------------------------
 %%

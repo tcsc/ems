@@ -22,7 +22,12 @@
 %% ============================================================================
 %% machine state exports
 %% ============================================================================
--export([waiting_for_socket/2, ready/2]).
+-export([
+  waiting_for_socket/2, 
+  ready/2, 
+  send_response/5, 
+  send_server_error/3, 
+  send_server_error/4]).
 
 %% ============================================================================
 %% Internal exports
@@ -35,7 +40,7 @@
 %% @end
 %% ----------------------------------------------------------------------------
 
--record(rtsp_connection_state, {
+-record(state, {
   server_pid,
   socket,
   sender,
@@ -52,7 +57,7 @@
 %% ----------------------------------------------------------------------------
 start_link(ServerPid) -> 
   ?LOG_DEBUG("rtsp_connection:start_link/1", []),
-  State = #rtsp_connection_state{
+  State = #state{
     server_pid = ServerPid, 
     pending_data = << >>,
     pending_requests = dict:new()},
@@ -82,7 +87,7 @@ handle_event(_Event, StateName, StateData) ->
 %% ----------------------------------------------------------------------------
 handle_info({tcp, Socket, Data}, 
             State, 
-            StateData = #rtsp_connection_state{pending_data = PendingData}) ->
+            StateData = #state{pending_data = PendingData}) ->
   % combine the newly-arrived data with the stuff leftover from the last reqest
   AccumulatedData = list_to_binary([PendingData, Data]),
   
@@ -92,7 +97,7 @@ handle_info({tcp, Socket, Data},
     
   % update the connection state with the leftovers from the processing
   NewNewStateData = 
-    NewStateData#rtsp_connection_state{pending_data=Leftovers},
+    NewStateData#state{pending_data=Leftovers},
     
   % reset the socket so that it pings us again when more data arrives
   inet:setopts(Socket, [{active,once}]),
@@ -104,6 +109,12 @@ handle_info({tcp_closed, Socket}, StateName, State) ->
 
 handle_info({sender_waiting, SendingPid}, StateName, StateData) ->
   {next_state, StateName, StateData};
+  
+handle_info({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, StateData) ->
+  ?LOG_DEBUG("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
+    [Sequence, Status]),
+  NewStateData = handle_send_response(Sequence, Status, ExtraHeaders, Body, StateData),
+  {next_state, StateName, NewStateData}; 
 
 handle_info(Info, StateName, StateData) ->
   ?LOG_DEBUG("rtsp_connection:handle_info/3 ~w, ~w, ~w", [Info, StateName, StateData]),
@@ -126,7 +137,52 @@ terminate(Reason, StateName, StateData) ->
 %% ----------------------------------------------------------------------------
 code_change(OldVsn, StateName, StateData, Extra) -> 
   {ok, StateName, StateData}.
-  
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+
+send_response(Sequence, Status, ExtraHeaders, Body) ->
+  send_response(self(),Sequence, Status, ExtraHeaders, Body).
+
+%% ----------------------------------------------------------------------------
+%% @doc Sends a send_response message to the supplied process. The process will 
+%%      pick up the response from the receive loop, format it and queue it for
+%%      sending 
+%% @spec send_response(Pid, Sequence, Status, ExtraHeaders, Body) -> ok
+%%         Pid = pid()
+%%         Sequence = int()
+%%         Status = ok | server_error | not_found | ...
+%%         ExtraHeaders = [Header]
+%%         Body = binary()
+%%         Header = {Name, Value}
+%%         Name = term()
+%%         Value = string()
+%% @end
+%% ----------------------------------------------------------------------------
+send_response(Pid, Sequence, Status, ExtraHeaders, Body) ->
+  Pid ! {send_response, Sequence, Status, ExtraHeaders, Body},
+  ok.
+
+%% ----------------------------------------------------------------------------
+%% @doc Formats and sends a response to an RTSP message
+%% @spec handle_send_response(Sequence, Status, ExtraHeaders, Body, State) -> NewState
+%% @end
+%% ----------------------------------------------------------------------------
+handle_send_response(Sequence, Status, ExtraHeaders, Body, State) ->
+  case deregister_pending_request(Sequence, State) of 
+    {NewState,Request} ->
+      RtspVersion = Request#rtsp_request.version,
+      AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
+      Response = #rtsp_response{status = ?RTSP_STATUS_OK,
+                                version = RtspVersion}, 
+      FormattedResponse = rtsp:format_message(Response, AllHeaders, Body),
+      send_data(State, FormattedResponse),
+      NewState;
+
+    _ -> State
+  end.
+
 %% ============================================================================
 %% State callbacks
 %% ============================================================================
@@ -138,7 +194,7 @@ waiting_for_socket({socket, Socket}, State) ->
   ?LOG_DEBUG("rtsp_connection:wating_for_socket/2 - got socket", []),
   inet:setopts(Socket, [{active,once}]),
   Sender = start_sender(self(), Socket),
-  NewState = State#rtsp_connection_state{socket=Socket, sender=Sender},
+  NewState = State#state{socket=Socket, sender=Sender},
   {next_state, ready, NewState};
   
 waiting_for_socket(Message, State) -> 
@@ -164,7 +220,7 @@ ready(Event, State) ->
 %% @spec handle_data(StateName, Data, StateData) -> Result
 %%       Result = {ok, NewState, NewStateData, Remainder}
 %%       NewState = term()
-%%       NewStateData = rtsp_connection_state()
+%%       NewStateData = state()
 %%
 %% @end
 %% ----------------------------------------------------------------------------
@@ -195,7 +251,7 @@ handle_data(ready, Data, StateData) ->
         % request into the connection state and go around again - but this time
         % in the reading_body state.  
         _ -> 
-          NewState = StateData#rtsp_connection_state{
+          NewState = StateData#state{
             pending_message={RtspMessage, Headers}},
           handle_data(reading_body, Remainder, NewState)
       end;
@@ -207,7 +263,7 @@ handle_data(ready, Data, StateData) ->
   end;
 
 handle_data(reading_body, Data, StateData) ->
-  {Message,Header} = StateData#rtsp_connection_state.pending_message,
+  {Message,Header} = StateData#state.pending_message,
   ContentLength = Header#rtsp_message_header.content_length,
   
   DataSize = size(Data),
@@ -223,7 +279,7 @@ handle_data(reading_body, Data, StateData) ->
       end,
 
       NewState = dispatch_message(Message, Header, Body, 
-        StateData#rtsp_connection_state{pending_message = undefined}),
+        StateData#state{pending_message = undefined}),
       handle_data(ready, Remainder, NewState);
     
     true ->  {ok, reading_body, StateData, Data}
@@ -240,77 +296,46 @@ handle_data(State, Data, StateData) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @spec dispatch_message(Message,Headers,Body) -> Result
+%% @spec dispatch_message(Message, Headers, Body, State) -> NewState
 %%       Message = Request | Response
-%%       Result = State
+%%       Headers = rtsp_message_header()
+%% @end
 %% ---------------------------------------------------------------------------- 
 dispatch_message(Request,Headers,Body,State) when is_record(Request,rtsp_request) ->
-  {Uri, Sequence, _, _} = get_request_info(Request, Headers),
-  Method = Request#rtsp_request.method,
+  {Method, Uri, Sequence, _, _} = rtsp:get_request_info(Request, Headers),
     
   ?LOG_DEBUG("rtsp_connection:dispatch_message/4 - handling #~w ~s ~s",
     [Sequence,Method,Uri]),
   
+  NewState = register_pending_request(Sequence, Request, State),
   try
-    {StatusCode, ResponseHeaders, ResponseBody, NewState} = case Method of
-      "OPTIONS" -> handle_options(Request,Headers,Body,State);
-      "ANNOUNCE" -> handle_announce(Request,Headers,Body,State);
-      "SETUP" -> handle_setup(Request,Headers,Body,State);
-      _ -> handle_unknown_request(Request,Headers,Body,State)
-    end,
-    
-    FullResponseHeader = build_response_headers(Sequence, 
-      size(ResponseBody), ResponseHeaders),
-
-    Response = #rtsp_response{status = ?RTSP_STATUS_OK,
-                              version = Request#rtsp_request.version},
-    
-    send_response(Response, FullResponseHeader, ResponseBody, NewState)
+    handle_request(Method, Sequence, Request, Headers, Body, NewState)
   catch
-    {rtsp_error, Reason} ->
-      server_error(Reason, Sequence, State);
-      
-    Any -> 
-      server_error(Any, Sequence, State)
-  end;
-  
-dispatch_message(Response,Headers,Body,State) when is_record(Response,rtsp_response) ->
-  ?LOG_DEBUG("rtsp_connection:dispatch_message/4 - sending message to server", []),
-  ServerPid = State#rtsp_connection_state.server_pid,
-  gen_server:cast(ServerPid,{response,self(),Response,Headers,State}),
-  State.
-
-%% ----------------------------------------------------------------------------
-%% @doc Formats an RTSP response message and sends it to the client
-%% @spec send_response(Response,Headers,Body,State) -> NewState
-%% @end
-%% ----------------------------------------------------------------------------
-send_response(Response,Headers,Body,State) ->
-  FormattedResponse = rtsp:format_message(Response,Headers,Body),
-  send_data(State,FormattedResponse),
-  State.
+    Error -> 
+      send_server_error(Error, Error, Sequence, State),
+      State
+  end.  
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-server_error(Reason, Sequence, State) when is_list(Reason)->
+send_server_error(Reason, Sequence, State) ->
+  send_server_error(self(), Reason, Sequence, State).
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+send_server_error(Pid, Reason, Sequence, State) when is_list(Reason) ->
   Message = lib_io:format("Error ~w", [Reason]),
   Body = utf:to_utf8(Message),
-  Headers = build_response_headers(Sequence, length(Message), 
-    [{content_type, "text/plain; charset=utf-8"}]),
-  Response = #rtsp_response{
-    status = rtsp:translate(internal_server_error),
-    version = {1,1}},
-  send_response(Response,Headers,Body,State),
+  Headers = [{content_type, "text/plain; charset=utf-8"}],
+  Status = rtsp:translate(internal_server_error),
+  send_response(Pid, Sequence, Headers, Body, State),
   State;
   
-server_error(Reason, Sequence, State) ->
-  Headers = build_response_headers(Sequence, 0, []),
-  Response = #rtsp_response{
-      status = rtsp:translate_status(Reason),
-      version = {1,1}},
-  send_response(Response, Headers, << >>, State),
-  State.  
+send_server_error(Pid, Reason, Sequence, State) ->
+  send_response(Pid, rtsp:translate_status(Reason), [], << >>, State),
+  State.
 
 %% ----------------------------------------------------------------------------
 %% @spec build_response_headers(Sequence, ContentLength, Headers) -> Result
@@ -347,139 +372,28 @@ build_response_headers(Sequence, ContentLength, Headers) ->
     content_length = ContentLength, 
     content_type = ContentType, 
     headers = ServerHeader
-  }.
+  }.  
   
 %% ----------------------------------------------------------------------------
-%% @spec handle_request(Request,Headers,Body,State) -> Result
-%%       Result = {Response,ResponseHeaders,ResponseBody,NewState}
+%% @spec handle_request(Method, Request,Headers,Body,State) -> Result
+%%       Method = options | accounce | setup | play | teardown
+%% @end
 %% ----------------------------------------------------------------------------  
-handle_options(Request, Headers, Body, State) ->
-  PublicOptions = [?RTSP_METHOD_DESCRIBE, 
+handle_request(options, Sequence, Request, Headers, Body, State) ->
+  PublicOptions = [?RTSP_METHOD_DESCRIBE,
                    ?RTSP_METHOD_SETUP,
                    ?RTSP_METHOD_PLAY,
-                   ?RTSP_METHOD_TEARDOWN],                   
-  {ok, [{"Public", PublicOptions}], << >>, State}.
+                   ?RTSP_METHOD_TEARDOWN],
+  send_response(ok, Sequence, [{"Public", PublicOptions}], << >>, State);
 
-%% ----------------------------------------------------------------------------
-%% @doc Processes an RTSP ANNOUNCE request
-%% @spec handle_anounce(Request, Headers, Body, State) -> Result
-%%       Result = {Response, ResponseHeaders, ResponseBody, NewState}
-%% @end
-%% ----------------------------------------------------------------------------
-handle_announce(Request, Headers, Body, State) ->
-  {Uri, _, ContentLength, ContentType} = get_request_info(Request, Headers),
-  {_,_,_,Path} = url:parse(Uri),
+%%
+handle_request(Method, Sequence, Request, Headers, Body, State) ->
+  ems_session_manager:receive_rtsp_request(Sequence, Request, Headers, Body),
+  State.
   
-  if
-    ContentType /= "application/sdp" -> 
-      throw({rtsp_error, unsupported_media_type});
-    
-    ContentLength =:= 0 -> 
-      throw({rtsp_error, length_required});
-      
-    true -> ok
-  end,
-  
-  SessionDescription = sdp:parse(Body),
-
-  case ems_session_manager:create_session(Path,SessionDescription) of
-    {error, timeout} -> throw({rtsp_error, server_unavailable});
-    {error, Reason}  -> throw({rtsp_error, internal_server_error});
-    _ -> ok
-  end,
-  
-  {ok, [], << >>, State}.
-  
-%% ----------------------------------------------------------------------------
-%% @doc Handles an RTSP SETUP request
-%% @spec
-%% @end
-%% ----------------------------------------------------------------------------
-handle_setup(Request, Headers, Body, State) ->
-  {Uri,_,_,_} = get_request_info(Request, Headers),
-  {_,_,_,Path} = url:parse(Uri),
-  
-  case find_session(Path) of
-    {SessionPid, SessionPath} ->
-      StreamName = string:substr(Path, length(SessionPath)+2),
-      
-      ?LOG_DEBUG("rtsp_connection:handle_setup/4 - stream ~s on session ~s", 
-        [StreamName, SessionPath]),
-      
-      % look for the client's transport header 
-      case rtsp:get_header(Headers, ?RTSP_TRANSPORT) of
-        ClientHeader when is_list(ClientHeader) ->
-          % ok - we have a transport header, so parse it and fling the parsed 
-          % transport spec off to the session for processing
-          ClientTransport = rtsp:parse_transport(ClientHeader),      
-          case ems_session:setup_stream(SessionPid, StreamName, ClientTransport) of
-            
-            {ok, ServerTransport} when is_list(ServerTransport) ->
-              % right - the session liked the transport and has set up the 
-              % stream for us. Now we need to format the server-side transport
-              % spec and send it back to the client in the RTSP response
-              ?LOG_DEBUG("rtsp_connection:handle_setup/4 - server transport is ~w", [ServerTransport]),
-                
-              ServerHeader = rtsp:format_transport(ServerTransport),
-              {ok, [{?RTSP_TRANSPORT, ServerHeader}], << >>, State};
-              
-            {error, Reason} ->
-              % The session didn't like what we gave it, or couldn't do what we 
-              % asked at this time. Map the session error reason to an RTSP 
-              % status code and bail.
-              throw({rtsp_error,session_error_to_rtsp_status(Reason)})
-          end;
-        
-        false -> 
-          % No transport header in the setup request. That's very bad, and the 
-          % client should be punished.
-          throw({rtsp_error,bad_request})
-      end,
-      ok;
-      
-    false -> 
-      throw({rtsp_error,not_found})
-  end.
-    
-%% ----------------------------------------------------------------------------
-%% @doc The default case - returns "not implemented" regardless of the method 
-%%      or URI
-%% ----------------------------------------------------------------------------
-handle_unknown_request(Request, Headers, Body, State) ->
-  {not_implemented, [], << >>, State}.    
-
 %% ============================================================================
 %% Utilility functions
 %% ============================================================================
-get_request_info(Request, Headers) ->
-  Uri = Request#rtsp_request.uri,
-  Sequence = Headers#rtsp_message_header.sequence,
-  ContentLength = Headers#rtsp_message_header.content_length,
-  ContentType = Headers#rtsp_message_header.content_type,
-  {Uri, Sequence, ContentLength, ContentType}.
-  
-%% ----------------------------------------------------------------------------
-%% @doc Finds a session by recursively trying each sub path - i.e. first it 
-%%      tries the full path, then (if no session is found on the full path) it 
-%%      tries the path minus everything after the last separator, and so on.  
-%% @spec find_session(Path) -> Result
-%%       Result = false | {SessionPid, SessionPath}
-%% @end
-%% ----------------------------------------------------------------------------
-find_session([$/]) -> 
-  false;
-
-find_session(Path) ->
-  case ems_session_manager:get_session_process(Path) of
-    false -> 
-      case string:rchr(Path, $/) of
-        0 -> false;
-        N -> 
-          SubPath = string:substr(Path,1,N-1),
-          find_session(SubPath)
-      end;
-    Pid -> {Pid, Path} 
-  end.
 
 %% ----------------------------------------------------------------------------
 %% @doc Maps an ems session error reason to an appropriate RTSP status code.
@@ -493,6 +407,34 @@ session_error_to_rtsp_status(Error) ->
     _                     -> bad_request
   end.
 
+%% ----------------------------------------------------------------------------
+%% @doc registers the a pending request in a list of pending requests
+%% @spec register_pending_request(Seq, Request, State) -> NewState
+%%         Request = rtsp_request()
+%%         State = state()
+%% @end
+%% ----------------------------------------------------------------------------
+register_pending_request(Seq, Request, State) ->
+  PendingRequests = State#state.pending_requests,
+  State#state{pending_requests = dict:append(Seq, Request, PendingRequests)}.
+
+%% ----------------------------------------------------------------------------
+%% @spec deregister_pending_request(Seq, State) -> Result
+%%         Seq = int()
+%%         State = state()
+%%         Result = NewState | {Request, NewState}
+%% @end
+%% ----------------------------------------------------------------------------
+deregister_pending_request(Seq, State) ->
+  PendingRequests = State#state.pending_requests,
+  case dict:find(Seq, PendingRequests) of 
+    {ok, Request} -> 
+      NewDict = dict:erase(Seq, PendingRequests),
+      {Request, State#state{ pending_requests=NewDict }};
+      
+    _ -> State
+  end.
+
 %% ============================================================================
 %% RTSP Sender implementation
 %% ============================================================================
@@ -503,7 +445,7 @@ session_error_to_rtsp_status(Error) ->
 %%       Result = ok | {error, Reason}
 %% @end
 %% ----------------------------------------------------------------------------
-send_data(State = #rtsp_connection_state{sender=SenderPid}, Data) ->
+send_data(State = #state{sender=SenderPid}, Data) ->
   SenderPid ! {rtsp_send, self(), Data},
   ok.
   

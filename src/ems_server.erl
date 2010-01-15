@@ -40,8 +40,7 @@ start_link() ->
 		Error ->
 			?LOG_DEBUG("ems_server:start_link/0 - server failed to start ~w", [Error]),
 			Error
-	end.
-			
+	end.		
 
 %% ----------------------------------------------------------------------------
 %% @doc Stops the network server.

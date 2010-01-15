@@ -2,11 +2,12 @@
 -behaviour(gen_server).
 -include("erlang_media_server.hrl").
 -include ("sdp.hrl").
+-include("rtsp.hrl").
 
 %% ============================================================================
 %% Definitions
 %% ============================================================================
--record(state, {id, path, description, channels}).
+-record(state, {id, path, owner, description, channels}).
 
 %% ============================================================================
 %% gen_server callbacks
@@ -21,7 +22,7 @@
 	
 -export([
   start_link/3,
-  setup_stream/3]).
+  receive_rtsp_request/5]).
 
 %% ============================================================================
 %% Exports
@@ -32,39 +33,23 @@
 %% @spec start_link(Id, Path, Desc) -> Pid
 %%       Id = integer()
 %%       Path = string()
-%%       Desc = SDP session description
+%%       OwnerPid = pid()
 %% @end
 %% ----------------------------------------------------------------------------
-start_link(Id, Path, Desc) ->
-  ?LOG_DEBUG("ems_session:start_link/3 - Id: ~w, Path: ~s", [Id, Path]),
-  gen_server:start_link(?MODULE, {Id, Path, Desc}, []).
+start_link(Id, Path, OwnerPid) ->
+  ?LOG_DEBUG("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
+  gen_server:start_link(?MODULE, {Id, Path, OwnerPid}, []).
   
-%% ----------------------------------------------------------------------------
-%% @doc Sets up a new stream, returning a new transport definition for the
-%%      caller to return to the client.
-%% @spec stream_setup(SessionPid, StreamName, Transport) -> Result
-%%         Result = {ok, ServerTransport}
-%%         Transport = ServerTransport = TransportSpec
-%%         TrasportSpec = [TransportOption]
-%% @end
-%% ----------------------------------------------------------------------------
-setup_stream(SessionPid, StreamName, Transport) ->
-  ?LOG_DEBUG("ems_session:setup_stream/3 ~s", [StreamName]),
-  try
-    gen_server:call(SessionPid, {setup_stream, StreamName, Transport})
-  catch
-    exit:{timeout,_} -> {error, timeout};
-    _Type:Err -> {error, Err}
-  end.
+receive_rtsp_request(SessionPid, Request, Headers, Body, ConnectionPid) ->
+  gen_server:cast(SessionPid, {rtsp_request, Request, Headers, Body, ConnectionPid}).
   
 %% ============================================================================
 %% Server Callbacks
 %% ============================================================================
 
-init({Id, Path, Desc}) ->
-  ?LOG_DEBUG("ems_session:init/2 - ~s", [Path]),
-	{ok, Channels} = create_channels(Desc),
-  State = #state{id=Id, path=Path, description=Desc, channels=Channels},
+init({Id, Path, OwnerPid}) ->
+  ?LOG_DEBUG("ems_session:init/3 - ~s", [Path]),
+  State = #state{id=Id, path=Path, owner=OwnerPid},
   {ok, State}.
   
 %% ----------------------------------------------------------------------------
@@ -77,31 +62,26 @@ init({Id, Path, Desc}) ->
 %% @end 
 %% ----------------------------------------------------------------------------
 
-% handles a stream setup request from a client
-handle_call({setup_stream, StreamName, Transport}, From, State) ->
-  ?LOG_DEBUG("ems_session:handle_call/3 - Setting up stream ~s with transport ~w",
-    [StreamName, Transport]),
-    
-  try
-    case lists:keysearch(direction, 1, Transport) of
-      {value, {direction, Direction}} -> 
-        {ServerTransportSpec, NewState} = setup_stream(Direction, StreamName, Transport, State),
-        {reply, {ok, ServerTransportSpec}, NewState};
-
-      _ -> 
-        throw({ems_session,unsupported_transport})
-    end
-  catch
-    {ems_session, Reason} -> {reply, {error, Reason}, State}
-  end;
-
 %% The default implementation. Swallows the message.
 handle_call(Request, From, State) ->
   {noreply, State}.
 
 %% ----------------------------------------------------------------------------
 %%
-%% ----------------------------------------------------------------------------    
+%% ----------------------------------------------------------------------------
+handle_cast({rtsp_request, Request, Headers, Body, Connection}, State) ->
+  ?LOG_DEBUG("ems_session:handle_cast/2 - Handling RTSP request", []),
+
+  Method = Request#rtsp_request.method,
+  Sequence = Headers#rtsp_message_header.sequence,
+  try
+    handle_request(Method, Sequence, Request, Headers, Body, Connection, State)
+  catch
+    ems_session:Error -> 
+      rtsp_connection:send_error(Connection, Error),
+      State
+  end;
+  
 handle_cast(Request, State) ->
   {noreply, State}.
   
@@ -127,6 +107,62 @@ code_change(OldVersion, State, Extra) ->
 %% Internal functions
 %% ============================================================================
 
+% Handles an RTSP ANNOUNCE request by parsing the SDP session description and 
+% creating the media channels
+handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
+  {_, _, _, ContentLength, ContentType} = rtsp:get_request_info(Request,Headers),
+  
+  if
+    ContentType /= "application/sdp" ->
+      throw({ems_session, bad_request});
+      
+    true ->
+      SessionDescription = sdp:parse(Body),
+      {ok, Channels} = create_channels(SessionDescription),
+      NewState = State#state{description=SessionDescription, channels=Channels},
+      rtsp_connection:send_response(Connection, Sequence, ok, [], <<>>),
+      NewState
+  end;
+
+handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
+  ?LOG_DEBUG("ems_session:handle_request/7 - SETUP", []),
+  
+  {Uri,_,_,_} = rtsp:get_request_info(Request, Headers),
+  {_,_,_,Path} = url:parse(Uri),
+  SessionPath = State#state.path,
+  StreamName = string:substr(Path, length(SessionPath)+2),
+
+  % look for the client's transport header 
+  case rtsp:get_header(Headers, ?RTSP_TRANSPORT) of
+    ClientHeader when is_list(ClientHeader) ->
+
+      % Parse transport header and use the parsed data to try and set up the
+      % stream
+      ClientTransport = rtsp:parse_transport(ClientHeader),      
+      
+      case setup_stream(StreamName, ClientTransport, State) of
+        {ServerTransport, NewState} ->
+          ServerHeader = rtsp:format_transport(ServerTransport),
+          Headers = [{?RTSP_TRANSPORT}],
+          rtsp_conection:send_response(Connection, Sequence, ok, Headers, <<>>),
+          NewState;
+          
+        {error, Reason} ->
+          rtsp_conection:send_response(Connection, Sequence, unsupported_transport, Headers, <<>>),
+          State
+      end;
+       
+    _ ->
+      % No transport header in the setup request (or the transport header is 
+      % something other than a string). That's very bad, and the client should
+      % be punished. 
+      throw({ems_session, bad_request})
+  end;
+
+handle_request(Method, Sequence, Request, Headers, Body, Connection, State) ->
+  rtsp_connection:send_response(Connection, not_implemented, [], <<>>),
+  State.
+
 %% ----------------------------------------------------------------------------
 %% @doc Creates RTP distribution channels for each stream in the session
 %%      description.
@@ -136,19 +172,19 @@ code_change(OldVersion, State, Extra) ->
 %%       ChannelMap = dictionary()  
 %% @end
 %% ----------------------------------------------------------------------------
-create_channels(_Desc = #session_description{streams=Streams, 
+create_channels(_Desc = #session_description{streams = Streams, 
                                              rtp_map = RtpMap,
                                              format_map = Formats}) ->
   Result = lists:map(
-		fun (Stream = #media_stream{format = FormatIndex}) ->
-		  RtpMapEntry = case lists:keyfind(FormatIndex, 1, RtpMap) of
+    fun (Stream = #media_stream{format = FormatIndex}) ->
+      RtpMapEntry = case lists:keyfind(FormatIndex, 1, RtpMap) of
         false -> throw({ems_session, missing_rtpmap_entry});
-        RtpMap1 -> RtpMap1
+        Entry -> Entry
       end,
 			
-			case ems_channel:start_link(Stream, RtpMapEntry) of
-			  {ok, ChannelPid} -> ChannelPid
-			end,
+      case ems_channel:start_link(Stream, RtpMapEntry) of
+        {ok, ChannelPid} -> ChannelPid
+      end,
 			
 			{Stream#media_stream.control_uri, ChannelPid}
 		end,
@@ -160,7 +196,7 @@ create_channels(_Desc = #session_description{streams=Streams,
 %% @spec setup_stream(Direction, StreamName, Transport, State) -> Result
 %%       Direction = inbound | outbound
 %%       StreamName = string()
-%%       Transport = list()
+%%       ClientTransport = list()
 %%       State = term()
 %%       Result = {ServerTransport, NewState}
 %% @end
@@ -168,19 +204,22 @@ create_channels(_Desc = #session_description{streams=Streams,
 
 % Handles the inbound stream case - setting up the stream manager and getting
 % it ready to receive RTP data from the broadcaster
-setup_stream(inbound, StreamName, TransportSpec, State) ->
+setup_stream(StreamName, ClientTransport, State) ->
+  
+  Direction = case lists:keyfind(direction, 1, ClientTransport) of
+    {direction, Dir} -> Dir;
+    false -> outbound
+  end, 
+      
   case dict:find(StreamName, State#state.channels) of
     {ok, ChannelPid} -> 
-      {ok, ServerTransportSpec} = ems_channel:configure_input(ChannelPid, TransportSpec),
-      {ServerTransportSpec, State};
+      {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport),
+      {ServerTransport, State};
       
     error -> 
       throw({ems_server, not_found})
-  end;
+  end.
   
-setup_stream(outbound, StreamName, Transport, State) ->
-  {[], State}.
-
 %% ---------------------------------------------------------------------------- 
 %%
 %% ----------------------------------------------------------------------------    
