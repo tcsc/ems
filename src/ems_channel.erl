@@ -67,12 +67,13 @@ init(Args = #state{stream=Stream, rtpmap=RtpMap}) ->
 %% ----------------------------------------------------------------------------
 handle_call({configure, TransportSpec}, _From, State) ->
   ?LOG_DEBUG("ems_channel:handle_call/3 - handling stream configure", []),
-  {RtpReceiverPid, {RtpPort, RtcpPort}} = rtp_receiver:start_link(TransportSpec),
+  {RtpReceiverPid, {Host, RtpPort, RtcpPort}} = rtp_receiver:start_link(TransportSpec),
   
-  ?LOG_DEBUG("ems_channel:handle_call/3 - Pid: ~w, ports: ~w-~w", [RtpReceiverPid, 
-    RtpPort, RtcpPort]),
-  ServerTransportSpec = [{server_port, [RtpPort, RtcpPort]} | TransportSpec],
-
+  ?LOG_DEBUG("ems_channel:handle_call/3 - Pid: ~w, ports: ~w:~w-~w",
+    [RtpReceiverPid, Host,RtpPort, RtcpPort]),
+  ServerTransportSpec = lists:append(TransportSpec, [
+    {server_port, [RtpPort, RtcpPort]} ]), 
+                        
   ?LOG_DEBUG("ems_channel:handle_call/3 - Server Transport Spec: ~w", [ServerTransportSpec]),  
   NewState = State#state{receiver_pid = RtpReceiverPid},
   {reply, {ok, ServerTransportSpec}, NewState};

@@ -6,7 +6,8 @@
 
 %% ---------------------------------------------------------------------------- 
 %% @spec start_link(TransportSpec) -> Result
-%%         Result = {Pid, {RtpPort, RtcpPort}}
+%%         Result = {Pid, {IpAddress, RtpPort, RtcpPort}}
+%%         
 %% @end
 %% ---------------------------------------------------------------------------- 
 start_link(TransportSpec) ->
@@ -25,16 +26,18 @@ start_link(TransportSpec) ->
   
 receiver_entrypoint(TransportSpec, OwnerPid) ->
   ?LOG_DEBUG("rtp_receiver:receiver_entrypoint/1 - creating RTP sockets", []),
-    
+  
   {ok, RtpSocket} = gen_udp:open(0, [binary, {active, true}]),
   {ok, RtcpSocket} = gen_udp:open(0, [binary, {active, true}]),
 
-  {ok, RtpPort} = inet:port(RtpSocket),
+  {ok, {Host, RtpPort}} = inet:sockname(RtpSocket),
   {ok, RtcpPort} = inet:port(RtcpSocket),
+  
 
-  ?LOG_DEBUG("rtp_receiver:receiver_entrypoint/1 - Server Ports are ~w:~w", [RtpPort,RtcpPort]),
+  ?LOG_DEBUG("rtp_receiver:receiver_entrypoint/1 - Server Ports are ~w:~w-~w", 
+    [Host, RtpPort, RtcpPort]),
 
-  proc_lib:init_ack({ok, {self(), {RtpPort,RtcpPort}}}),
+  proc_lib:init_ack({ok, {self(), {Host, RtpPort, RtcpPort}}}),
 
   ?LOG_DEBUG("rtp_receiver:receiver_entrypoint/1 - Starting RTP receiver loop", []),  
   receiver_loop(#state{owner_pid = OwnerPid}, RtpSocket, RtcpSocket).

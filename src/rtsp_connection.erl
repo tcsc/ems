@@ -171,7 +171,7 @@ send_response(Pid, Sequence, Status, ExtraHeaders, Body) ->
 %% ----------------------------------------------------------------------------
 handle_send_response(Sequence, Status, ExtraHeaders, Body, State) ->
   case deregister_pending_request(Sequence, State) of 
-    {NewState,Request} ->
+    {Request, NewState} ->
       RtspVersion = Request#rtsp_request.version,
       AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
       Response = #rtsp_response{status = ?RTSP_STATUS_OK,
@@ -384,7 +384,8 @@ handle_request(options, Sequence, Request, Headers, Body, State) ->
                    ?RTSP_METHOD_SETUP,
                    ?RTSP_METHOD_PLAY,
                    ?RTSP_METHOD_TEARDOWN],
-  send_response(ok, Sequence, [{"Public", PublicOptions}], << >>, State);
+  send_response(self(), Sequence, ok, [{"Public", PublicOptions}], << >>),
+  State;
 
 %%
 handle_request(Method, Sequence, Request, Headers, Body, State) ->
@@ -428,7 +429,7 @@ register_pending_request(Seq, Request, State) ->
 deregister_pending_request(Seq, State) ->
   PendingRequests = State#state.pending_requests,
   case dict:find(Seq, PendingRequests) of 
-    {ok, Request} -> 
+    {ok, [Request]} -> 
       NewDict = dict:erase(Seq, PendingRequests),
       {Request, State#state{ pending_requests=NewDict }};
       

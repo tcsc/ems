@@ -15,7 +15,6 @@
 %% Formatting Exports
 %% ============================================================================
 -export([
-  format_header/1, 
   format_transport/1]).
 
 %% ============================================================================
@@ -350,7 +349,9 @@ reify_headers(Headers) ->
     headers = Headers}.
 
 %% ----------------------------------------------------------------------------    
-%% @doc Formats the headers as a list of strings
+%% @doc Formats the headers as a list of strings. Note that ani multivalued 
+%%      headers must have already bee coalesced into a single string by the 
+%%      time they get here.
 %% @spec format_headers(Hedaers) -> [string()]
 %% end
 %% ----------------------------------------------------------------------------
@@ -359,7 +360,7 @@ format_headers(Headers = #rtsp_message_header{
   
   % format the generic headers into a list of strings
   Formatter = fun({Name,Value}) ->
-      io_lib:format("~s: ~s\r\n", [Name, format_header(Value)]) 
+      io_lib:format("~s: ~s\r\n", [Name, Value]) 
   end,
   
   FormattedHeaders = lists:map(
@@ -404,15 +405,6 @@ find_eom(Offset, Data) when Offset < size(Data) ->
 
 find_eom(Offset, Data) ->
   notfound.
-
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------  
-format_header([Value]) ->
-  Value;
-  
-format_header([Value|Remainder]) ->
-  Value ++ ", " ++ format_header(Remainder).
 
 %% ----------------------------------------------------------------------------  
 %% @doc Formats a trasport spec as an RTSP transport header

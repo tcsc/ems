@@ -39,7 +39,10 @@
 start_link(Id, Path, OwnerPid) ->
   ?LOG_DEBUG("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
   gen_server:start_link(?MODULE, {Id, Path, OwnerPid}, []).
-  
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------  
 receive_rtsp_request(SessionPid, Request, Headers, Body, ConnectionPid) ->
   gen_server:cast(SessionPid, {rtsp_request, Request, Headers, Body, ConnectionPid}).
   
@@ -75,11 +78,13 @@ handle_cast({rtsp_request, Request, Headers, Body, Connection}, State) ->
   Method = Request#rtsp_request.method,
   Sequence = Headers#rtsp_message_header.sequence,
   try
-    handle_request(Method, Sequence, Request, Headers, Body, Connection, State)
+    NewState = handle_request(Method, Sequence, Request, Headers, Body, 
+      Connection, State),
+    {noreply, NewState}
   catch
     ems_session:Error -> 
       rtsp_connection:send_error(Connection, Error),
-      State
+      {noreply, State}
   end;
   
 handle_cast(Request, State) ->
@@ -127,7 +132,7 @@ handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
 handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
   ?LOG_DEBUG("ems_session:handle_request/7 - SETUP", []),
   
-  {Uri,_,_,_} = rtsp:get_request_info(Request, Headers),
+  Uri = Request#rtsp_request.uri,
   {_,_,_,Path} = url:parse(Uri),
   SessionPath = State#state.path,
   StreamName = string:substr(Path, length(SessionPath)+2),
@@ -143,12 +148,12 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
       case setup_stream(StreamName, ClientTransport, State) of
         {ServerTransport, NewState} ->
           ServerHeader = rtsp:format_transport(ServerTransport),
-          Headers = [{?RTSP_TRANSPORT}],
-          rtsp_conection:send_response(Connection, Sequence, ok, Headers, <<>>),
+          ServerHeaders = [{?RTSP_TRANSPORT, ServerHeader}],
+          rtsp_connection:send_response(Connection, Sequence, ok, ServerHeaders, <<>>),
           NewState;
           
         {error, Reason} ->
-          rtsp_conection:send_response(Connection, Sequence, unsupported_transport, Headers, <<>>),
+          rtsp_connection:send_response(Connection, Sequence, unsupported_transport, Headers, <<>>),
           State
       end;
        
