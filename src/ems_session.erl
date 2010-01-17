@@ -136,7 +136,7 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
   {_,_,_,Path} = url:parse(Uri),
   SessionPath = State#state.path,
   StreamName = string:substr(Path, length(SessionPath)+2),
-
+ 
   % look for the client's transport header 
   case rtsp:get_header(Headers, ?RTSP_TRANSPORT) of
     ClientHeader when is_list(ClientHeader) ->
@@ -145,10 +145,12 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
       % stream
       ClientTransport = rtsp:parse_transport(ClientHeader),      
       
-      case setup_stream(StreamName, ClientTransport, State) of
-        {ServerTransport, NewState} ->
+      case setup_stream(Headers, StreamName, ClientTransport, State) of
+        {SessionId, ServerTransport, NewState} ->
           ServerHeader = rtsp:format_transport(ServerTransport),
-          ServerHeaders = [{?RTSP_TRANSPORT, ServerHeader}],
+          ServerHeaders = [
+            {?RTSP_TRANSPORT, ServerHeader},
+            {?RTSP_SESSION, SessionId}],
           rtsp_connection:send_response(Connection, Sequence, ok, ServerHeaders, <<>>),
           NewState;
           
@@ -157,7 +159,7 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
           State
       end;
        
-    _ ->
+    undefined ->
       % No transport header in the setup request (or the transport header is 
       % something other than a string). That's very bad, and the client should
       % be punished. 
@@ -165,7 +167,7 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
   end;
 
 handle_request(Method, Sequence, Request, Headers, Body, Connection, State) ->
-  rtsp_connection:send_response(Connection, not_implemented, [], <<>>),
+  rtsp_connection:send_response(Connection, Sequence, not_implemented, [], <<>>),
   State.
 
 %% ----------------------------------------------------------------------------
@@ -198,7 +200,7 @@ create_channels(_Desc = #session_description{streams = Streams,
 	
 %% ----------------------------------------------------------------------------
 %% @doc Sets up an RTP data stream
-%% @spec setup_stream(Direction, StreamName, Transport, State) -> Result
+%% @spec setup_stream(ClientSessionId, Direction, StreamName, Transport, State) -> Result
 %%       Direction = inbound | outbound
 %%       StreamName = string()
 %%       ClientTransport = list()
@@ -209,22 +211,39 @@ create_channels(_Desc = #session_description{streams = Streams,
 
 % Handles the inbound stream case - setting up the stream manager and getting
 % it ready to receive RTP data from the broadcaster
-setup_stream(StreamName, ClientTransport, State) ->
-  
-  Direction = case lists:keyfind(direction, 1, ClientTransport) of
-    {direction, Dir} -> Dir;
-    false -> outbound
-  end, 
-      
+setup_stream(Headers, StreamName, ClientTransport, State) ->
   case dict:find(StreamName, State#state.channels) of
     {ok, ChannelPid} -> 
-      {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport),
-      {ServerTransport, State};
+      Direction = case lists:keyfind(direction, 1, ClientTransport) of
+        {direction, Dir} -> Dir;
+        false -> outbound
+      end,
+      
+      ClientSessionId = case get_client_session(Direction, Headers, State) of
+        session_not_found -> throw({ems_session, session_not_found});
+        Csid -> Csid
+      end,
+      
+      {ok, ServerTransport} = 
+        ems_channel:configure_input(ChannelPid, ClientTransport),
+      {ClientSessionId, ServerTransport, State};
       
     error -> 
       throw({ems_server, not_found})
   end.
   
+get_client_session(inbound, Headers, State) ->
+  ClientSessionId = rtsp:get_header(Headers, ?RTSP_SESSION),
+  MediaSessionId = lists:flatten(io_lib:format("~w", [State#state.id])),
+  case ClientSessionId of 
+    undefined -> MediaSessionId;
+    MediaSessionId -> MediaSessionId;
+    _ -> session_not_found
+  end;
+
+get_client_session(outbound, ClientSessionId, State) ->
+  session_not_found.
+    
 %% ---------------------------------------------------------------------------- 
 %%
 %% ----------------------------------------------------------------------------    

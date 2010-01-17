@@ -51,14 +51,14 @@ parse_message(Data) when is_binary(Data) ->
 
 %% -----------------------------------------------------------------------------
 %% @doc 
-%% @spec get_header(Headers, Header) -> Header | false
+%% @spec get_header(Headers, Header) -> Header | undefined
 %%       Header = string()
 %% @end
 %% -----------------------------------------------------------------------------
 get_header(Headers, Header) when is_record(Headers, rtsp_message_header) ->
   case dict:find(Header, Headers#rtsp_message_header.headers) of
     {ok, [Value]} -> Value;
-    _ -> false
+    _ -> undefined
   end.
   
 %% -----------------------------------------------------------------------------
@@ -528,6 +528,7 @@ translate_status(Status) ->
     bad_request           -> {400, "Bad Request"};
     not_found             -> {404, "Not Found"};
     length_required       -> {411, "Length Required"};
+    session_not_found     -> {454, "Session Not Found"};
     method_not_valid      -> {455, "Method Not Valid in this State"};
     unsupported_transport -> {461, "Unsupported transport"};
     internal_server_error -> {500, "Internal Server Error"};
