@@ -4,7 +4,8 @@
 -module (stringutils).
 -export([
   extract_token/3, 
-  to_int_def/2, 
+  to_int_def/2,
+  int_to_string/1,
   index_of/2, 
   split_on_first/2, 
   split_on_last/2,
@@ -104,3 +105,13 @@ index_of(Index, Char, []) ->
 unquote(Text) ->
   Parts = string:tokens(Text, [$"]),
   string:join(Parts, []).
+
+%% ----------------------------------------------------------------------------
+%% @spec int_to_string(Value) -> Result
+%%         Value = int()
+%%         Result = string()
+%% @end
+%% ----------------------------------------------------------------------------  
+int_to_string(Value) ->
+  lists:flatten(io_lib:format("~p", [Value])).
+  

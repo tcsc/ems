@@ -7,7 +7,9 @@
 %% ============================================================================
 %% Definitions
 %% ============================================================================
--record(state, {id, path, owner, description, channels}).
+-record(state, {id, path, owner, description, channels, clients = dict:new()}).
+
+-record(client, {id, channels = []}).
 
 %% ============================================================================
 %% gen_server callbacks
@@ -166,10 +168,31 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
       throw({ems_session, bad_request})
   end;
 
+handle_request(play, Sequence, Request, Headers, Body, Connection, State) ->
+  ?LOG_DEBUG("ems_session:handle_request/7 - PLAY", []),
+  
+  Uri = Request#rtsp_request.uri,
+  {_,_,_,Path} = url:parse(Uri),
+  SessionPath = State#state.path,
+
+  Client = get_client(Headers, State),
+  case SessionPath of
+    Path -> 
+      lists:foreach(
+        fun(Pid) -> Pid ! play end,
+        Client#client.channels
+      ),
+      rtsp_connection:send_response(Connection, Sequence, ok, [], <<>>);
+    
+    _ -> 
+      StreamName = string:substr(Path, length(SessionPath)+2)
+  end,
+  State;
+
 handle_request(Method, Sequence, Request, Headers, Body, Connection, State) ->
   rtsp_connection:send_response(Connection, Sequence, not_implemented, [], <<>>),
   State.
-
+  
 %% ----------------------------------------------------------------------------
 %% @doc Creates RTP distribution channels for each stream in the session
 %%      description.
@@ -218,32 +241,71 @@ setup_stream(Headers, StreamName, ClientTransport, State) ->
         {direction, Dir} -> Dir;
         false -> outbound
       end,
+            
+      {Client, NewState} = get_or_create_client(Headers, State),
       
-      ClientSessionId = case get_client_session(Direction, Headers, State) of
-        session_not_found -> throw({ems_session, session_not_found});
-        Csid -> Csid
-      end,
-      
-      {ok, ServerTransport} = 
-        ems_channel:configure_input(ChannelPid, ClientTransport),
-      {ClientSessionId, ServerTransport, State};
-      
+      case Direction of 
+        inbound ->
+          {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport),
+          SessionHeader = stringutils:int_to_string(Client#client.id),
+          {SessionHeader, ServerTransport, save_subscription(Client, ChannelPid, NewState)};
+          
+        outbound -> throw({ems_session, not_implemented})
+      end;
+            
     error -> 
       throw({ems_server, not_found})
   end.
-  
-get_client_session(inbound, Headers, State) ->
-  ClientSessionId = rtsp:get_header(Headers, ?RTSP_SESSION),
-  MediaSessionId = lists:flatten(io_lib:format("~w", [State#state.id])),
-  case ClientSessionId of 
-    undefined -> MediaSessionId;
-    MediaSessionId -> MediaSessionId;
-    _ -> session_not_found
-  end;
 
-get_client_session(outbound, ClientSessionId, State) ->
-  session_not_found.
-    
+%%----------------------------------------------------------------------------
+%% @spec get_or_create_client(Headers, State) -> {Client, NewState}
+%%----------------------------------------------------------------------------
+get_or_create_client(Headers, State) ->
+  case rtsp:get_header(Headers, ?RTSP_SESSION) of
+    undefined -> create_client(State);
+    SessionId -> {get_client(SessionId, State), State}
+  end.
+
+%%----------------------------------------------------------------------------
+%% @spec create_client(State) -> {Client, NewState}
+%% @end
+%% ----------------------------------------------------------------------------
+create_client(State) ->
+  Id = random:uniform(99999999),
+  OldClients = State#state.clients,
+  Client = #client{id = Id},
+  NewState = State#state{clients = dict:store(Id, Client, OldClients)}, 
+  {Client, NewState}.
+
+%%----------------------------------------------------------------------------
+%% @spec get_client_session(State) -> Client
+%% @end
+%% ----------------------------------------------------------------------------
+get_client(Headers, State) when is_record(Headers, rtsp_message_header) ->
+  case rtsp:get_header(Headers, ?RTSP_SESSION) of
+    undefined -> throw({ems_session, bad_request});
+    Header -> get_client(Header, State)
+  end;
+  
+get_client(SessionId, State) when is_list(SessionId) ->
+  get_client(list_to_integer(SessionId), State);
+  
+get_client(SessionId, State) when is_integer(SessionId) ->
+  case dict:find(SessionId, State#state.clients) of
+    {ok, Client} -> Client;
+    error -> throw({ems_session, session_not_found})
+  end.
+
+%%----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------      
+save_subscription(Client = #client{id=ClientId, channels=Channels}, SubscribedPid, State) ->
+  NewChannels = [SubscribedPid | Channels],
+  NewClients = dict:update(ClientId, 
+    fun( C ) -> C#client{channels = NewChannels} end,
+    State#state.clients),
+  NewState = State#state{clients=NewClients}.
+  
 %% ---------------------------------------------------------------------------- 
 %%
 %% ----------------------------------------------------------------------------    

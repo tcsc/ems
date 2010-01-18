@@ -55,7 +55,7 @@ receiver_loop(State,RtpSocket,RtcpSocket) ->
       NewState = handle_rtp_packet(State, Host, Port, Data),
       receiver_loop(NewState, RtpSocket, RtcpSocket);
       
-    {Message} ->      
+    Message ->      
       ?LOG_DEBUG("rtp_receiver:receiver_loop/3 - something happened (~w)", [Message]),
       receiver_loop(State, RtpSocket, RtcpSocket)
   end.
@@ -64,12 +64,16 @@ receiver_loop(State,RtpSocket,RtcpSocket) ->
 %%
 %% ----------------------------------------------------------------------------   
 handle_rtp_packet(State, Host, Port, Data) ->
+  ?LOG_DEBUG("rtp_receiver:handle_rtp_packet/4 - (~p bytes from ~w:~p)", 
+    [size(Data), Host, Port]),
   State.
   
 %% ---------------------------------------------------------------------------- 
 %%
 %% ---------------------------------------------------------------------------- 
 handle_rtcp_packet(State, Host, Port, Data) ->
+  ?LOG_DEBUG("rtp_receiver:handle_rtcp_packet/4 - (~p bytes from ~w:~p)", 
+    [size(Data), Host, Port]),
   State.
   
 %% ---------------------------------------------------------------------------- 
