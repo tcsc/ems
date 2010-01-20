@@ -37,16 +37,18 @@
 -define(RTSP_METHOD_DESCRIBE, "DESCRIBE").
 -define(RTSP_METHOD_SETUP,    "SETUP").
 -define(RTSP_METHOD_PLAY,     "PLAY").
+-define(RTSP_METHOD_PAUSE,    "PAUSE").
 -define(RTSP_METHOD_TEARDOWN, "TEARDOWN").
+-define(RTSP_METHOD_RECORD,   "RECORD").
 
--define(RTSP_SEQUENCE,       "cseq").
--define(RTSP_CONTENT_LENGTH, "content-length").
--define(RTSP_CONTENT_TYPE,   "content-type").
--define(RTSP_TRANSPORT,      "transport").
--define(RTSP_SESSION,        "session").
+-define(RTSP_HEADER_SEQUENCE,       "CSeq").
+-define(RTSP_HEADER_SERVER,         "Server").
+-define(RTSP_HEADER_CONTENT_LENGTH, "Content-Length").
+-define(RTSP_HEADER_CONTENT_TYPE,   "Content-Type").
+-define(RTSP_HEADER_TRANSPORT,      "Transport").
+-define(RTSP_HEADER_SESSION,        "Session").
+-define(RTSP_HEADER_RANGE,          "Range").
 
 -define(RTSP_STATUS_OK, {200, "OK"}).
 -define(RTSP_STATUS_SERVER_ERROR, {500, "Internal Server Error"}).
 -define(RTSP_STATUS_NOT_IMPLEMENTED, {501, "Not Implemented"}).
-
--define(RTSP_HEADER_SERVER, "Server").

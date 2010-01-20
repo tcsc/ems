@@ -380,11 +380,18 @@ build_response_headers(Sequence, ContentLength, Headers) ->
 %% @end
 %% ----------------------------------------------------------------------------  
 handle_request(options, Sequence, Request, Headers, Body, State) ->
-  PublicOptions = [?RTSP_METHOD_DESCRIBE,
+  PublicOptions = [?RTSP_METHOD_ANNOUNCE,
+                   ?RTSP_METHOD_DESCRIBE,
                    ?RTSP_METHOD_SETUP,
                    ?RTSP_METHOD_PLAY,
-                   ?RTSP_METHOD_TEARDOWN],
-  send_response(self(), Sequence, ok, [{"Public", PublicOptions}], << >>),
+                   ?RTSP_METHOD_PAUSE,
+                   ?RTSP_METHOD_TEARDOWN,
+                   ?RTSP_METHOD_RECORD],
+  send_response(
+    self(), 
+    Sequence, 
+    ok, 
+    [{"Public", string:join(PublicOptions, ", ")}], << >>),
   State;
 
 %%

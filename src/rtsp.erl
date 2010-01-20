@@ -1,5 +1,6 @@
 -module (rtsp).
 -include("rtsp.hrl").
+-include("erlang_media_server.hrl").
 
 %% ============================================================================
 %% Parsing Exports 
@@ -147,7 +148,7 @@ parse_lower_transport(Transport) ->
 parse_transport_mode(Mode) ->
   case stringutils:unquote(string:to_lower(Mode)) of
     "play" -> outbound;
-    "receive" -> inbound;
+    "record" -> inbound;
     _ -> Mode
   end.
 
@@ -206,6 +207,8 @@ format_message(Message,Headers,Body) when is_record(Message,rtsp_response) ->
   
   % convert the list of strings into a single string
   ResponseText = lists:flatten([ResponseLine | HeaderText]),
+  
+  ?LOG_DEBUG("~n~s", [ResponseText]),
   
   % encode the response as UTF-8
   Result = utf:string_to_utf8(lists:append(ResponseText, "\r\n")),
@@ -312,8 +315,8 @@ parse_headers(Lines) ->
 parse_headers([Line|Leftover], Headers) -> 
   {NameText,EndOfName} = stringutils:extract_token(Line,0,$:),
   {ValueText,_} = stringutils:extract_token(Line,EndOfName+1,$\n),
-  Name = string:to_lower(string:strip(NameText)),
-  Value = string:strip(ValueText),
+  Name = string:strip(NameText),
+  Value = lists:flatten(string:strip(ValueText)),
   NewHeaders = dict:append(Name,Value,Headers),
   parse_headers(Leftover, NewHeaders);
 
@@ -326,16 +329,16 @@ parse_headers([], Headers) ->
 %% @end
 %% ----------------------------------------------------------------------------
 reify_headers(Headers) ->
-  {ok, [CSeq]} = dict:find(?RTSP_SEQUENCE, Headers),
+  {ok, [CSeq]} = dict:find("CSeq", Headers),
 
   ContentLength = 
-    case dict:find(?RTSP_CONTENT_LENGTH, Headers) of
+    case dict:find("Content-Length", Headers) of
       {ok, [ContentLengthText]} -> list_to_integer(ContentLengthText);
       _ -> 0
     end,
 
   ContentType = 
-    case dict:find(?RTSP_CONTENT_TYPE, Headers) of
+    case dict:find("Content-Type", Headers) of
       {ok, [ContentTypeText]} -> ContentTypeText;
       _ -> ""
     end,
@@ -422,10 +425,10 @@ format_transport(TransportSpec) ->
   LowerTransport = case lists:keyfind(lower_transport, 1, TransportSpec) of
     {lower_transport, T} ->
       io_lib:format("/~s", [format_lower_transport(T)]);
-      
+
     _ -> ""
   end,
-  
+
   Attributes = lists:keydelete(profile, 1, 
     lists:keydelete(protocol, 1, TransportSpec)),
 
@@ -434,7 +437,15 @@ format_transport(TransportSpec) ->
     format_profile(Profile), 
     LowerTransport, 
     format_transport_attributes(Attributes)])).
-
+    
+    
+%  {client_port, ClientPorts} = lists:keyfind(client_port, 1, TransportSpec),
+%  {server_port, ServerPorts} = lists:keyfind(server_port, 1, TransportSpec),
+%  Text = io_lib:format(
+%    "RTP/AVP;unicast;client_port=~s;source=10.1.2.138;server_port=~s;mode=record", 
+%    [format_number_list(ClientPorts), format_number_list(ServerPorts)]),
+%  lists:flatten(Text).
+    
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
@@ -514,7 +525,7 @@ format_lower_transport(Transport) ->
 %% ----------------------------------------------------------------------------  
 format_transport_mode(Mode) ->
   case Mode of 
-    inbound -> "receive";
+    inbound -> "record";
     outbound -> "play";
     _ -> Mode
   end.

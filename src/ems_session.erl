@@ -140,7 +140,7 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
   StreamName = string:substr(Path, length(SessionPath)+2),
  
   % look for the client's transport header 
-  case rtsp:get_header(Headers, ?RTSP_TRANSPORT) of
+  case rtsp:get_header(Headers, ?RTSP_HEADER_TRANSPORT) of
     ClientHeader when is_list(ClientHeader) ->
 
       % Parse transport header and use the parsed data to try and set up the
@@ -151,8 +151,8 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
         {SessionId, ServerTransport, NewState} ->
           ServerHeader = rtsp:format_transport(ServerTransport),
           ServerHeaders = [
-            {?RTSP_TRANSPORT, ServerHeader},
-            {?RTSP_SESSION, SessionId}],
+            {?RTSP_HEADER_TRANSPORT, ServerHeader},
+            {?RTSP_HEADER_SESSION, SessionId}],
           rtsp_connection:send_response(Connection, Sequence, ok, ServerHeaders, <<>>),
           NewState;
           
@@ -168,8 +168,8 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
       throw({ems_session, bad_request})
   end;
 
-handle_request(play, Sequence, Request, Headers, Body, Connection, State) ->
-  ?LOG_DEBUG("ems_session:handle_request/7 - PLAY", []),
+handle_request(record, Sequence, Request, Headers, Body, Connection, State) ->
+  ?LOG_DEBUG("ems_session:handle_request/7 - RECORD", []),
   
   Uri = Request#rtsp_request.uri,
   {_,_,_,Path} = url:parse(Uri),
@@ -182,7 +182,9 @@ handle_request(play, Sequence, Request, Headers, Body, Connection, State) ->
         fun(Pid) -> Pid ! play end,
         Client#client.channels
       ),
-      rtsp_connection:send_response(Connection, Sequence, ok, [], <<>>);
+      SessionId = stringutils:int_to_string(Client#client.id),
+      ResponseHeaders = [{?RTSP_HEADER_RANGE, "npt=now-"}, {?RTSP_HEADER_SESSION, SessionId}],
+      rtsp_connection:send_response(Connection, Sequence, ok, ResponseHeaders, <<>>);
     
     _ -> 
       StreamName = string:substr(Path, length(SessionPath)+2)
@@ -261,7 +263,7 @@ setup_stream(Headers, StreamName, ClientTransport, State) ->
 %% @spec get_or_create_client(Headers, State) -> {Client, NewState}
 %%----------------------------------------------------------------------------
 get_or_create_client(Headers, State) ->
-  case rtsp:get_header(Headers, ?RTSP_SESSION) of
+  case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
     undefined -> create_client(State);
     SessionId -> {get_client(SessionId, State), State}
   end.
@@ -282,7 +284,7 @@ create_client(State) ->
 %% @end
 %% ----------------------------------------------------------------------------
 get_client(Headers, State) when is_record(Headers, rtsp_message_header) ->
-  case rtsp:get_header(Headers, ?RTSP_SESSION) of
+  case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
     undefined -> throw({ems_session, bad_request});
     Header -> get_client(Header, State)
   end;
