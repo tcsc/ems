@@ -12,7 +12,7 @@ warn(Format, Args) ->
 	write($W, io_lib:format(Format,Args)).	
 	
 error(Format, Args) ->
-	error($E, io_lib:format(Format,Args)).	
+	write($E, io_lib:format(Format,Args)).	
 	
 write(Prefix, Message) ->
 	io:format("~w - [~c] - ~s~n", [self(), Prefix, Message]).

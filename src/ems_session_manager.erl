@@ -164,16 +164,15 @@ handle_request(_Method, Path, Sequence, Request, Headers, Body, ConnectionPid, S
 %% ----------------------------------------------------------------------------
 %% @doc Does the actual work of creating a session in response to a
 %%      create_session message
-%% @spec internal_create_session(Uri,Desc) -> {ok, Pid} | {error, Reason}
+%% @spec internal_create_session(Uri,Desc) -> {ok, Pid} | {error, already_exists}
 %%       Uri = string()
 %%       Desc = session_description()
 %%       Pid = pid()
-%%       Reason = already_exists 
 %% @end
 %% ----------------------------------------------------------------------------
 create_session(Path, Owner) ->
   case lookup_session_process(Path) of
-    Session when is_record(Session, session_info) ->
+    {_, _} ->
       ?LOG_DEBUG("ems_session_manager: session ~s already exists on this url", [Path]),
       {error, already_exists};
       

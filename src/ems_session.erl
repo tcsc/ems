@@ -68,7 +68,7 @@ init({Id, Path, OwnerPid}) ->
 %% ----------------------------------------------------------------------------
 
 %% The default implementation. Swallows the message.
-handle_call(Request, From, State) ->
+handle_call(_Request, _From, State) ->
   {noreply, State}.
 
 %% ----------------------------------------------------------------------------
@@ -85,29 +85,29 @@ handle_cast({rtsp_request, Request, Headers, Body, Connection}, State) ->
     {noreply, NewState}
   catch
     ems_session:Error -> 
-      rtsp_connection:send_error(Connection, Error),
+      rtsp_connection:send_server_error(Connection, Error, Sequence),
       {noreply, State}
   end;
   
-handle_cast(Request, State) ->
+handle_cast(_Request, State) ->
   {noreply, State}.
   
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
-handle_info(Info, State) ->
+handle_info(_Info, State) ->
   {noreply, State}.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
-terminate(Reason, State) ->
+terminate(_Reason, _State) ->
   ok.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------    
-code_change(OldVersion, State, Extra) ->
+code_change(_OldVersion, State, _Extra) ->
   {ok, State}.
   
 %% ============================================================================
@@ -117,7 +117,7 @@ code_change(OldVersion, State, Extra) ->
 % Handles an RTSP ANNOUNCE request by parsing the SDP session description and 
 % creating the media channels
 handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
-  {_, _, _, ContentLength, ContentType} = rtsp:get_request_info(Request,Headers),
+  {_,_,_,_, ContentType} = rtsp:get_request_info(Request,Headers),
   
   if
     ContentType /= "application/sdp" ->
@@ -131,7 +131,7 @@ handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
       NewState
   end;
 
-handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
+handle_request(setup, Sequence, Request, Headers, <<>>, Connection, State) ->
   ?LOG_DEBUG("ems_session:handle_request/7 - SETUP", []),
   
   Uri = Request#rtsp_request.uri,
@@ -147,19 +147,13 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
       % stream
       ClientTransport = rtsp:parse_transport(ClientHeader),      
       
-      case setup_stream(Headers, StreamName, ClientTransport, State) of
-        {SessionId, ServerTransport, NewState} ->
-          ServerHeader = rtsp:format_transport(ServerTransport),
-          ServerHeaders = [
-            {?RTSP_HEADER_TRANSPORT, ServerHeader},
-            {?RTSP_HEADER_SESSION, SessionId}],
-          rtsp_connection:send_response(Connection, Sequence, ok, ServerHeaders, <<>>),
-          NewState;
-          
-        {error, Reason} ->
-          rtsp_connection:send_response(Connection, Sequence, unsupported_transport, Headers, <<>>),
-          State
-      end;
+      {SessionId, ServerTransport, NewState} = setup_stream(Headers, StreamName, ClientTransport, State),
+      ServerHeader = rtsp:format_transport(ServerTransport),
+      ServerHeaders = [
+        {?RTSP_HEADER_TRANSPORT, ServerHeader},
+        {?RTSP_HEADER_SESSION, SessionId}],
+      rtsp_connection:send_response(Connection, Sequence, ok, ServerHeaders, <<>>),
+      NewState;
        
     undefined ->
       % No transport header in the setup request (or the transport header is 
@@ -168,7 +162,7 @@ handle_request(setup, Sequence, Request, Headers, Body, Connection, State) ->
       throw({ems_session, bad_request})
   end;
 
-handle_request(record, Sequence, Request, Headers, Body, Connection, State) ->
+handle_request(record, Sequence, Request, Headers, <<>>, Connection, State) ->
   ?LOG_DEBUG("ems_session:handle_request/7 - RECORD", []),
   
   Uri = Request#rtsp_request.uri,
@@ -187,11 +181,11 @@ handle_request(record, Sequence, Request, Headers, Body, Connection, State) ->
       rtsp_connection:send_response(Connection, Sequence, ok, ResponseHeaders, <<>>);
     
     _ -> 
-      StreamName = string:substr(Path, length(SessionPath)+2)
+      _StreamName = string:substr(Path, length(SessionPath)+2)
   end,
   State;
 
-handle_request(Method, Sequence, Request, Headers, Body, Connection, State) ->
+handle_request(_Method, Sequence, _Request, _Headers, <<>>, Connection, State) ->
   rtsp_connection:send_response(Connection, Sequence, not_implemented, [], <<>>),
   State.
   
@@ -206,7 +200,7 @@ handle_request(Method, Sequence, Request, Headers, Body, Connection, State) ->
 %% ----------------------------------------------------------------------------
 create_channels(_Desc = #session_description{streams = Streams, 
                                              rtp_map = RtpMap,
-                                             format_map = Formats}) ->
+                                             format_map = _Formats}) ->
   Result = lists:map(
     fun (Stream = #media_stream{format = FormatIndex}) ->
       RtpMapEntry = case lists:keyfind(FormatIndex, 1, RtpMap) of
@@ -301,12 +295,12 @@ get_client(SessionId, State) when is_integer(SessionId) ->
 %%----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------      
-save_subscription(Client = #client{id=ClientId, channels=Channels}, SubscribedPid, State) ->
+save_subscription(_Client = #client{id=ClientId, channels=Channels}, SubscribedPid, State) ->
   NewChannels = [SubscribedPid | Channels],
   NewClients = dict:update(ClientId, 
     fun( C ) -> C#client{channels = NewChannels} end,
     State#state.clients),
-  NewState = State#state{clients=NewClients}.
+  State#state{clients=NewClients}.
   
 %% ---------------------------------------------------------------------------- 
 %%

@@ -54,7 +54,7 @@ configure_input(Pid, Transport) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-init(Args = #state{stream=Stream, rtpmap=RtpMap}) ->
+init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
   ?LOG_DEBUG("ems_channel:init/1 - starting channel for ~s", 
     [Stream#media_stream.control_uri]),
   {ok, Args}.
@@ -102,7 +102,7 @@ handle_info(_Info, State) ->
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------	
-terminate(Reason, State) ->
+terminate(Reason, _State) ->
 	?LOG_DEBUG("ems_channel:terminate/2 - ~w",[Reason]),
 	ok.
 	

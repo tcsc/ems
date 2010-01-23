@@ -26,8 +26,8 @@
   waiting_for_socket/2, 
   ready/2, 
   send_response/5, 
-  send_server_error/3, 
-  send_server_error/4]).
+  send_server_error/2, 
+  send_server_error/3]).
 
 %% ============================================================================
 %% Internal exports
@@ -103,11 +103,11 @@ handle_info({tcp, Socket, Data},
   inet:setopts(Socket, [{active,once}]),
   {next_state, NewState, NewNewStateData};
 
-handle_info({tcp_closed, Socket}, StateName, State) ->
+handle_info({tcp_closed, _Socket}, _StateName, State) ->
   ?LOG_DEBUG("rtsp_connection:handle_info/3 - tcp connection closed",[]),
   {stop, normal, State};
 
-handle_info({sender_waiting, SendingPid}, StateName, StateData) ->
+handle_info({sender_waiting, _SendingPid}, StateName, StateData) ->
   {next_state, StateName, StateData};
   
 handle_info({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, StateData) ->
@@ -123,27 +123,20 @@ handle_info(Info, StateName, StateData) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-handle_sync_event(Event, From, StateName, StateData) -> 
+handle_sync_event(_Event, _From, StateName, StateData) -> 
   {next_state, StateName, StateData}.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-terminate(Reason, StateName, StateData) -> 
+terminate(_Reason, _StateName, _StateData) -> 
   ok.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-code_change(OldVsn, StateName, StateData, Extra) -> 
+code_change(_OldVsn, StateName, StateData, _Extra) -> 
   {ok, StateName, StateData}.
-
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------
-
-send_response(Sequence, Status, ExtraHeaders, Body) ->
-  send_response(self(),Sequence, Status, ExtraHeaders, Body).
 
 %% ----------------------------------------------------------------------------
 %% @doc Sends a send_response message to the supplied process. The process will 
@@ -174,8 +167,7 @@ handle_send_response(Sequence, Status, ExtraHeaders, Body, State) ->
     {Request, NewState} ->
       RtspVersion = Request#rtsp_request.version,
       AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
-      Response = #rtsp_response{status = ?RTSP_STATUS_OK,
-                                version = RtspVersion}, 
+      Response = #rtsp_response{status = Status, version = RtspVersion}, 
       FormattedResponse = rtsp:format_message(Response, AllHeaders, Body),
       send_data(State, FormattedResponse),
       NewState;
@@ -224,10 +216,10 @@ ready(Event, State) ->
 %%
 %% @end
 %% ----------------------------------------------------------------------------
-handle_data(ready, <<$$,Channel:8,Size:16/big,Data/binary>>, StateData) ->
+handle_data(ready, <<$$, _Channel:8, Size:16/big, Data/binary>>, StateData) ->
   if size(Data) >= Size -> 
     % extract the packet from the data stream;
-    <<Packet:Size/binary, Remainder/binary>> = Data,
+    <<_Packet:Size/binary, Remainder/binary>> = Data,
       % do what you have to with the packet data
       handle_data(ready, Remainder, StateData);
     true -> 
@@ -239,7 +231,7 @@ handle_data(ready, Data, StateData) ->
     {ok, Message, Remainder} ->             
       % attempt to parse the message and deal with it before going 
       % around again
-      {MessageType, RtspMessage, Headers} = rtsp:parse_message(Message),
+      {_MessageType, RtspMessage, Headers} = rtsp:parse_message(Message),
       case Headers#rtsp_message_header.content_length of
         % content length is zero, so we can just pass the message on to the server
         % without further ado  
@@ -272,7 +264,7 @@ handle_data(reading_body, Data, StateData) ->
     ContentLength =< DataSize ->
       if  
         ContentLength < size(Data) ->
-          {Body, Remainder} = split_binary(ContentLength,Data);
+          {Body, Remainder} = split_binary(Data, ContentLength);
   
         ContentLength =:= size(Data) ->
           {Body, Remainder} = {Data, << >>}
@@ -286,10 +278,8 @@ handle_data(reading_body, Data, StateData) ->
   end;
 
 % the generic handle data
-handle_data(State, Data, StateData) ->
-  NewState = ready,
-  NewStateData = StateData,
-  {ok, NewState, NewStateData, Data}.
+handle_data(_State, Data, StateData) ->
+  {ok, ready, StateData, Data}.
 
 %% ============================================================================
 %% Message handling routines 
@@ -312,30 +302,40 @@ dispatch_message(Request,Headers,Body,State) when is_record(Request,rtsp_request
     handle_request(Method, Sequence, Request, Headers, Body, NewState)
   catch
     Error -> 
-      send_server_error(Error, Error, Sequence, State),
+      send_server_error(Error, Error, Sequence),
       State
   end.  
 
 %% ----------------------------------------------------------------------------
-%%
+%% @doc A wrapper for send_server_error/3 that assumes the target connection
+%%      Pid is the current process. 
+%% @spec send_server_error(Reason, Sequence) -> ok
+%%         Reason = atom() | string()
+%%         Sequence = int()
+%% @end
 %% ----------------------------------------------------------------------------
-send_server_error(Reason, Sequence, State) ->
-  send_server_error(self(), Reason, Sequence, State).
+send_server_error(Reason, Sequence) ->
+  send_server_error(self(), Reason, Sequence).
 
 %% ----------------------------------------------------------------------------
-%%
+%% @doc Generates an RTSP response for a failure and forwards it to the
+%%      supplied RTSP connection for transmission back to the client.
+%% @spec send_server_error(Connection, Reason, Sequence) -> ok
+%%         Connection = pid()
+%%         Reason = atom() | string()
+%%         Sequence = int()
+%% @end
 %% ----------------------------------------------------------------------------
-send_server_error(Pid, Reason, Sequence, State) when is_list(Reason) ->
+send_server_error(Pid, Reason, Sequence) when is_list(Reason) ->
   Message = lib_io:format("Error ~w", [Reason]),
-  Body = utf:to_utf8(Message),
+  Body = utf:string_to_utf8(Message),
   Headers = [{content_type, "text/plain; charset=utf-8"}],
-  Status = rtsp:translate(internal_server_error),
-  send_response(Pid, Sequence, Headers, Body, State),
-  State;
+  send_response(Pid, Sequence, internal_server_error, Headers, Body),
+  ok;
   
-send_server_error(Pid, Reason, Sequence, State) ->
-  send_response(Pid, rtsp:translate_status(Reason), [], << >>, State),
-  State.
+send_server_error(Pid, Reason, Sequence) ->
+  send_response(Pid, Sequence, Reason, [], << >>),
+  ok.
 
 %% ----------------------------------------------------------------------------
 %% @spec build_response_headers(Sequence, ContentLength, Headers) -> Result
@@ -379,7 +379,7 @@ build_response_headers(Sequence, ContentLength, Headers) ->
 %%       Method = options | accounce | setup | play | teardown
 %% @end
 %% ----------------------------------------------------------------------------  
-handle_request(options, Sequence, Request, Headers, Body, State) ->
+handle_request(options, Sequence, _Request, _Headers, << >>, State) ->
   PublicOptions = [?RTSP_METHOD_ANNOUNCE,
                    ?RTSP_METHOD_DESCRIBE,
                    ?RTSP_METHOD_SETUP,
@@ -395,25 +395,13 @@ handle_request(options, Sequence, Request, Headers, Body, State) ->
   State;
 
 %%
-handle_request(Method, Sequence, Request, Headers, Body, State) ->
+handle_request(_Method, Sequence, Request, Headers, Body, State) ->
   ems_session_manager:receive_rtsp_request(Sequence, Request, Headers, Body),
   State.
   
 %% ============================================================================
 %% Utilility functions
 %% ============================================================================
-
-%% ----------------------------------------------------------------------------
-%% @doc Maps an ems session error reason to an appropriate RTSP status code.
-%% @end
-%% ----------------------------------------------------------------------------  
-session_error_to_rtsp_status(Error) ->
-  case Error of
-    already_exists        -> method_not_valid_in_this_state;
-    unsupported_transport -> unsupported_transport;
-    timeout               -> service_unavailable;
-    _                     -> bad_request
-  end.
 
 %% ----------------------------------------------------------------------------
 %% @doc registers the a pending request in a list of pending requests
@@ -453,7 +441,7 @@ deregister_pending_request(Seq, State) ->
 %%       Result = ok | {error, Reason}
 %% @end
 %% ----------------------------------------------------------------------------
-send_data(State = #state{sender=SenderPid}, Data) ->
+send_data(_State = #state{sender=SenderPid}, Data) ->
   SenderPid ! {rtsp_send, self(), Data},
   ok.
   
@@ -488,7 +476,7 @@ stop_sender(SenderPid) ->
 %% ----------------------------------------------------------------------------
 sender_loop(ConnectionPid, Socket) ->
   receive
-    {rtsp_send, Sender, Data} when is_binary(Data)->
+    {rtsp_send, _Sender, Data} when is_binary(Data)->
       gen_tcp:send(Socket,Data),
       ConnectionPid ! {sender_waiting, self()},
       sender_loop(ConnectionPid, Socket);

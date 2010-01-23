@@ -272,7 +272,8 @@ parse_method(MethodName) ->
     "ANNOUNCE" -> announce;
     "DESCRIBE" -> describe;
     "SETUP" -> setup;
-    "PLAY" -> play;
+    "PLAY" -> play;    
+    "RECORD" -> record;
     "TEARDOWN" -> teardown;
     _ -> MethodName
   end.
@@ -292,7 +293,7 @@ parse_response_line(Data) ->
 %% @end
 %% -----------------------------------------------------------------------------
 format_response_line(Response) when is_record(Response, rtsp_response) ->
-  {Status,Text} = Response#rtsp_response.status,
+  {Status,Text} = translate_status(Response#rtsp_response.status),
   {VersionMajor,VersionMinor} = Response#rtsp_response.version,
   io_lib:format("RTSP/~w.~w ~3..0w ~s\r\n", [VersionMajor, VersionMinor, Status, Text]).
 

@@ -63,9 +63,23 @@ receiver_loop(State,RtpSocket,RtcpSocket) ->
 %% ---------------------------------------------------------------------------- 
 %%
 %% ----------------------------------------------------------------------------   
-handle_rtp_packet(State, Host, Port, Data) ->
+handle_rtp_packet(State, Host, Port, Data = <<2:2, 
+                                              Padding:1, 
+                                              Extension:1, 
+                                              SyncSrcCount:4, 
+                                              Marker:1, 
+                                              PayloadType:7,
+                                              Sequence:16/little,
+                                              Timestamp:32/little,
+                                              SyncSource:32,
+                                              _/binary>>) ->
   ?LOG_DEBUG("rtp_receiver:handle_rtp_packet/4 - (~p bytes from ~w:~p)", 
     [size(Data), Host, Port]),
+    
+%  {ContributingSources, HeaderExtensions, StartOfPayload} = rtp:extract_headers(SyncSrcCount, Data),
+  State;
+  
+handle_rtp_packet(State, Host, Port, Data) ->
   State.
   
 %% ---------------------------------------------------------------------------- 

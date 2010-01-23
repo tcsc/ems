@@ -17,9 +17,9 @@
 start(normal, _Args) ->
 	?LOG_INFO("erlang_media_server:start/2", []),
 	
-	case ems_supervisor:start_link([]) of
+	case ems_supervisor:start_link() of
 		{ok, Pid} -> {ok, Pid};
-		%{ok, Pid, State} -> {ok, Pid, State};
+		
 		Error ->
 			?LOG_ERROR("erlang_media_server:start/2 - failed to start ~w", [Error]), 
 			Error
