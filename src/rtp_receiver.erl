@@ -3,6 +3,7 @@
 -export ([start_link/1, receiver_entrypoint/2]).
 
 -include ("erlang_media_server.hrl").
+-include ("rtp.hrl").
 
 %% ---------------------------------------------------------------------------- 
 %% @spec start_link(TransportSpec) -> Result
@@ -63,24 +64,19 @@ receiver_loop(State,RtpSocket,RtcpSocket) ->
 %% ---------------------------------------------------------------------------- 
 %%
 %% ----------------------------------------------------------------------------   
-handle_rtp_packet(State, Host, Port, Data = <<2:2, 
-                                              Padding:1, 
-                                              Extension:1, 
-                                              SyncSrcCount:4, 
-                                              Marker:1, 
-                                              PayloadType:7,
-                                              Sequence:16/little,
-                                              Timestamp:32/little,
-                                              SyncSource:32,
-                                              _/binary>>) ->
-  ?LOG_DEBUG("rtp_receiver:handle_rtp_packet/4 - (~p bytes from ~w:~p)", 
-    [size(Data), Host, Port]),
-    
-%  {ContributingSources, HeaderExtensions, StartOfPayload} = rtp:extract_headers(SyncSrcCount, Data),
-  State;
-  
 handle_rtp_packet(State, Host, Port, Data) ->
-  State.
+  case rtp:parse(Data) of
+    {ok, RtpPacket} when is_record(RtpPacket, rtp_packet) ->
+      ?LOG_DEBUG("rtp_receiver:handle_rtp_packet/4 - type ~w #~w ~w bytes", 
+        [RtpPacket#rtp_packet.payload_type, 
+         RtpPacket#rtp_packet.sequence,
+         size(Data)]),
+         
+      State;
+    
+    false -> % not obviously an RTP packet
+      State
+  end.
   
 %% ---------------------------------------------------------------------------- 
 %%

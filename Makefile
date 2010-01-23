@@ -6,11 +6,10 @@ VSN=$(ERLANG_MEDIA_SERVER_VSN)
 
 ESRC=./src
 EBIN=./ebin
-# ESUBDIRS=rtp
 
-SRCFILES= $(wildcard $(ESRC)/*.erl) $(foreach dir, $(ESUBDIRS), $(wildcard $(ESRC)/$(dir)/*.erl))
+
+SRCFILES= $(wildcard $(ESRC)/*.erl)
 MODULES=$(subst .erl, , $(subst $(ESRC)/, , $(SRCFILES)))
-MODULES_BASE=$(foreach mod, $(MODULES), $($(notdir mod)))
 MODULES_COMMA=$(foreach mod, $(MODULES), $($(notdir mod)),)
 
 HRL_FILES=
@@ -27,9 +26,12 @@ APP_SRC=$(ESRC)/$(APP_NAME).app.src
 all: $(EBIN) $(BEAMS) $(APP_TARGET)
 
 debug: all
-	erl -pa ebin ebin/rtp -smp auto -run debugger -run ems 
+	erl -pa ebin -smp auto -run debugger -run ems 
 	# -run appmon 
 	# -noshell
+	
+dialyzer: all
+	dialyzer -c $(EBIN)
 	
 # Note: In the open-source build, clean must not destroy the preloaded
 # beam files.
@@ -46,13 +48,13 @@ $(EBIN):
 	mkdir $(EBIN) $(foreach dir, $(ESUBDIRS), $(EBIN)/$(dir))
 
 $(EBIN)/%.beam: $(ESRC)/%.erl 
-	@$(ERLC) $(ERL_FLAGS) $(ERL_COMPILE_FLAGS) -o$(dir $(patsubst src/%.erl, ebin/%.beam, $<)) $<
+	@$(ERLC) $(ERL_FLAGS) $(ERL_COMPILE_FLAGS) -o$(EBIN) $<
 		
 $(APP_TARGET): $(APP_SRC) vsn.mk $(BEAMS)
 		sed -e 's;%VSN%;$(VSN);' \
 			-e 's;%PFX%;$(PFX);' \
 			-e 's;%APP_NAME%;$(APP_NAME);' \
-			-e 's;%MODULES_BASE%;%MODULES_BASE%$(MODULES_COMMA);' \
+			-e 's;%MODULES%;%MODULES%$(MODULES_COMMA);' \
 			$< > $<".tmp" 
 		sed -e 's/%MODULES%\(.*\),/\1/' \
 			$<".tmp" > $@ 
