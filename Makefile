@@ -6,7 +6,7 @@ VSN=$(ERLANG_MEDIA_SERVER_VSN)
 
 ESRC=./src
 EBIN=./ebin
-ESUBDIRS=rtp
+# ESUBDIRS=rtp
 
 SRCFILES= $(wildcard $(ESRC)/*.erl) $(foreach dir, $(ESUBDIRS), $(wildcard $(ESRC)/$(dir)/*.erl))
 MODULES=$(subst .erl, , $(subst $(ESRC)/, , $(SRCFILES)))
@@ -23,9 +23,6 @@ BEAMS= $(foreach module, $(MODULES), $(EBIN)/$(module).beam)
 ERL_COMPILE_FLAGS += -I./include +debug_info
 APP_TARGET=$(EBIN)/$(APP_NAME).app
 APP_SRC=$(ESRC)/$(APP_NAME).app.src
-
-#test:
-#	@echo $(BEAMS)
 
 all: $(EBIN) $(BEAMS) $(APP_TARGET)
 
