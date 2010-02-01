@@ -1,7 +1,7 @@
 -module (ems_channel).
 -include ("erlang_media_server.hrl").
 -include ("sdp.hrl").
--record (state, {pid, stream, rtpmap, receiver_pid}).
+-record (state, {pid, stream, rtpmap, receiver}).
 -behaviour (gen_server).
 
 %% ============================================================================
@@ -16,7 +16,7 @@
   code_change/3
 	]).
 	
--export ([start_link/2, configure_input/2]).
+-export ([start_link/2, configure_input/3]).
 
 %% ============================================================================
 %% @doc Creates and starts a new media distribution channel
@@ -38,10 +38,10 @@ start_link(Stream, RtpMap) ->
 %% @spec configure_input(Pid, TransportSpec) -> {ok, ServerTransportSpec} 
 %% @end 
 %% ============================================================================
-configure_input(Pid, Transport) ->
-  try
-    {ok, ServerTransportSpec} = gen_server:call(Pid, {configure, Transport}),
-    {ok, ServerTransportSpec}
+configure_input(Pid, Transport, ClientAddress) ->
+  try 
+    ?LOG_DEBUG("ems_channel:configure_input/3", []),
+    gen_server:call(Pid, {configure, Transport, ClientAddress})
   catch
     exit:{timeout,_} -> {error, timeout};
 	  _Type:Err -> {error, Err}
@@ -65,17 +65,13 @@ init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
 %% @spec handle_call(Request,From,State) -> {noreply, State}
 %% @end
 %% ----------------------------------------------------------------------------
-handle_call({configure, TransportSpec}, _From, State) ->
+handle_call({configure, TransportSpec, ClientAddress}, _From, State) ->
   ?LOG_DEBUG("ems_channel:handle_call/3 - handling stream configure", []),
-  {RtpReceiverPid, {Host, RtpPort, RtcpPort}} = rtp_receiver:start_link(TransportSpec),
-  
-  ?LOG_DEBUG("ems_channel:handle_call/3 - Pid: ~w, ports: ~w:~w-~w",
-    [RtpReceiverPid, Host,RtpPort, RtcpPort]),
-  ServerTransportSpec = lists:append(TransportSpec, [
-    {server_port, [RtpPort, RtcpPort]} ]), 
-                        
+  {RtpReceiverPid, ServerTransportSpec} = 
+    rtp_receiver:start_link(TransportSpec, ClientAddress),
+                          
   ?LOG_DEBUG("ems_channel:handle_call/3 - Server Transport Spec: ~w", [ServerTransportSpec]),  
-  NewState = State#state{receiver_pid = RtpReceiverPid},
+  NewState = State#state{receiver = RtpReceiverPid},
   {reply, {ok, ServerTransportSpec}, NewState};
   
 handle_call(_Request, _From, State) ->
@@ -87,7 +83,7 @@ handle_call(_Request, _From, State) ->
 %%      request.
 %% @spec handle_cast(Request,From,State) -> {noreply,State}
 %% @end
-%% ----------------------------------------------------------------------------
+%% ----------------------------------------------------------------------------  
 handle_cast(_Request, State) ->
 	?LOG_DEBUG("ems_channel:handle_cast/2 ~w",[_Request]),
 	{noreply, State}.
@@ -95,8 +91,13 @@ handle_cast(_Request, State) ->
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------	
+handle_info(enable, State) ->
+	?LOG_DEBUG("ems_channel:handle_info/2 - starting rtp receiver",[]),
+	rtp_receiver:enable(State#state.receiver),
+	{noreply, State};
+
 handle_info(_Info, State) ->
-	?LOG_DEBUG("ems_channel:handle_info/2",[]),
+	?LOG_DEBUG("ems_channel:handle_info/2 - ~p",[_Info]),
 	{noreply, State}.
 
 %% ----------------------------------------------------------------------------

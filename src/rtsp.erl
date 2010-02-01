@@ -430,23 +430,17 @@ format_transport(TransportSpec) ->
     _ -> ""
   end,
 
-  Attributes = lists:keydelete(profile, 1, 
-    lists:keydelete(protocol, 1, TransportSpec)),
+  Attributes = 
+    lists:keydelete(lower_transport, 1, 
+      lists:keydelete(profile, 1, 
+        lists:keydelete(protocol, 1, TransportSpec))),
 
   lists:flatten(io_lib:format("~s/~s~s;~s", [
     format_protocol(Protocol), 
     format_profile(Profile), 
     LowerTransport, 
     format_transport_attributes(Attributes)])).
-    
-    
-%  {client_port, ClientPorts} = lists:keyfind(client_port, 1, TransportSpec),
-%  {server_port, ServerPorts} = lists:keyfind(server_port, 1, TransportSpec),
-%  Text = io_lib:format(
-%    "RTP/AVP;unicast;client_port=~s;source=10.1.2.138;server_port=~s;mode=record", 
-%    [format_number_list(ClientPorts), format_number_list(ServerPorts)]),
-%  lists:flatten(Text).
-    
+        
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
@@ -484,14 +478,20 @@ format_single_attribute(Attribute) ->
     {interleaved, Channels}    -> {"interleaved", format_number_list(Channels)};
     {client_port, ClientPorts} -> {"client_port", format_number_list(ClientPorts)};
     {server_port, ServerPorts} -> {"server_port", format_number_list(ServerPorts)};
-    {source, Source}           -> {"source", Source};
-    {ssrc, SyncSrc}            -> {"ssrc", SyncSrc};
+    {source, Source}           -> {"source", format_ip_address(Source)};
+    {ssrc, SyncSrc}            -> {"ssrc", io_lib:format("~.16b", [SyncSrc])};
     {direction, Direction}     -> {"mode", format_transport_mode(Direction)};
     {layers, Layers}           -> {"layers", Layers};
     {ttl, TimeToLive}          -> {"ttl", TimeToLive};
     {Name,Value}               -> {Name, Value}
   end.  
 
+
+format_ip_address({A, B, C, D}) ->
+  io_lib:format("~p.~p.~p.~p", [A,B,C,D]);
+  
+format_ip_address(Address) ->
+  Address.
 
 %% ----------------------------------------------------------------------------
 %%
@@ -517,7 +517,7 @@ format_profile(Profile) ->
 format_lower_transport(Transport) ->
   case Transport of 
     tcp -> "TCP";
-    udp -> "TCP";
+    udp -> "UDP";
     _ -> Transport
   end.
 

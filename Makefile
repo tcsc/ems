@@ -26,7 +26,7 @@ APP_SRC=$(ESRC)/$(APP_NAME).app.src
 all: $(EBIN) $(BEAMS) $(APP_TARGET)
 
 debug: all
-	erl -pa ebin -smp auto -run debugger -run ems 
+	erl -pa ebin -smp auto -run debugger -run ems
 	# -run appmon 
 	# -noshell
 	

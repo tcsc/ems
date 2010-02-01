@@ -7,7 +7,7 @@
 %% ============================================================================
 %% exports
 %% ============================================================================
--export([start_link/1]).
+-export([start_link/1, get_client_address/1]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -64,6 +64,18 @@ start_link(ServerPid) ->
   gen_fsm:start_link(?MODULE, State, []).
 
 %% ---------------------------------------------------------------------------- 
+%%
+%% ---------------------------------------------------------------------------- 
+  
+get_client_address(ClientConnection) ->
+  ClientConnection ! {get_client_address, self()},
+  receive
+    {client_address, ClientAddress} -> ClientAddress
+  after 
+    1000 -> throw(timeout)
+  end.
+
+%% ---------------------------------------------------------------------------- 
 %% 
 %% ----------------------------------------------------------------------------
 init(State) -> 
@@ -85,6 +97,13 @@ handle_event(_Event, StateName, StateData) ->
 %% @spec
 %% @end
 %% ----------------------------------------------------------------------------
+handle_info({get_client_address, From}, 
+            StateName, 
+            StateData = #state{socket = Socket}) ->
+  {ok, {Host, _}} = inet:sockname(Socket),
+  From ! {client_address, Host},
+  {next_state, StateName, StateData};
+
 handle_info({tcp, Socket, Data}, 
             State, 
             StateData = #state{pending_data = PendingData}) ->
@@ -93,7 +112,7 @@ handle_info({tcp, Socket, Data},
   
   % process what we can of the data and get whatever's left back
   {ok, NewState, NewStateData, Leftovers} = 
-    handle_data(State, AccumulatedData, StateData),
+    handle_data(AccumulatedData, StateData, State),
     
   % update the connection state with the leftovers from the processing
   NewNewStateData = 
@@ -216,17 +235,17 @@ ready(Event, State) ->
 %%
 %% @end
 %% ----------------------------------------------------------------------------
-handle_data(ready, <<$$, _Channel:8, Size:16/big, Data/binary>>, StateData) ->
+handle_data(<<$$:8, _Channel:8, Size:16/big, Data/binary>>, StateData, ready) ->
   if size(Data) >= Size -> 
     % extract the packet from the data stream;
     <<_Packet:Size/binary, Remainder/binary>> = Data,
       % do what you have to with the packet data
-      handle_data(ready, Remainder, StateData);
+      handle_data(Remainder, StateData, ready);
     true -> 
       {ok, ready, StateData, Data}
   end;
     
-handle_data(ready, Data, StateData) ->
+handle_data(Data, StateData, ready) ->
   case rtsp:find_eom(Data) of
     {ok, Message, Remainder} ->             
       % attempt to parse the message and deal with it before going 
@@ -245,7 +264,7 @@ handle_data(ready, Data, StateData) ->
         _ -> 
           NewState = StateData#state{
             pending_message={RtspMessage, Headers}},
-          handle_data(reading_body, Remainder, NewState)
+          handle_data(Remainder, NewState, reading_body)
       end;
       
     notfound ->
@@ -254,7 +273,7 @@ handle_data(ready, Data, StateData) ->
       {ok, ready, StateData, Data}
   end;
 
-handle_data(reading_body, Data, StateData) ->
+handle_data(Data, StateData, reading_body) ->
   {Message,Header} = StateData#state.pending_message,
   ContentLength = Header#rtsp_message_header.content_length,
   
@@ -272,13 +291,13 @@ handle_data(reading_body, Data, StateData) ->
 
       NewState = dispatch_message(Message, Header, Body, 
         StateData#state{pending_message = undefined}),
-      handle_data(ready, Remainder, NewState);
+      handle_data(Remainder, NewState, ready);
     
     true ->  {ok, reading_body, StateData, Data}
   end;
 
 % the generic handle data
-handle_data(_State, Data, StateData) ->
+handle_data(Data, StateData, _State) ->
   {ok, ready, StateData, Data}.
 
 %% ============================================================================

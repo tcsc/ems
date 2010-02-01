@@ -299,15 +299,6 @@ parse_rtp_map(Text) ->
 %% @end
 %% ----------------------------------------------------------------------------
 
-media_type(MediaType) when is_list(MediaType) ->
-  case string:to_lower(MediaType) of
-    "audio" -> audio;
-    "video" -> video;
-    "application" -> application;
-    "data" -> data;
-    "control" -> control
-  end;
-  
 media_type(MediaType) when is_atom(MediaType) ->
   case MediaType of 
     audio -> "audio";
@@ -315,8 +306,17 @@ media_type(MediaType) when is_atom(MediaType) ->
     application -> "application";
     data -> "data";
     control -> "control"
-  end. 
-  
+  end;
+
+media_type(MediaType) when is_list(MediaType) ->
+  case string:to_lower(MediaType) of
+    "audio" -> audio;
+    "video" -> video;
+    "application" -> application;
+    "data" -> data;
+    "control" -> control
+  end.
+
 %% ----------------------------------------------------------------------------
 %% Parses a FormatP parameter
 %% @spec parse_format_parameter(FormatP) -> Result

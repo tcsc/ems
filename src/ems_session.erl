@@ -114,8 +114,13 @@ code_change(_OldVersion, State, _Extra) ->
 %% Internal functions
 %% ============================================================================
 
-% Handles an RTSP ANNOUNCE request by parsing the SDP session description and 
-% creating the media channels
+%% ----------------------------------------------------------------------------    
+%% @doc Handles an RTSP request 
+%% @throws {ems_session | Reason} where Reason = bad_requset.
+%% @spec handle_request(Method, Sequence, Request, Headers, Body, 
+%%         Connection, State) -> NewState
+%% @end
+%% ----------------------------------------------------------------------------    
 handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
   {_,_,_,_, ContentType} = rtsp:get_request_info(Request,Headers),
   
@@ -145,9 +150,11 @@ handle_request(setup, Sequence, Request, Headers, <<>>, Connection, State) ->
 
       % Parse transport header and use the parsed data to try and set up the
       % stream
-      ClientTransport = rtsp:parse_transport(ClientHeader),      
+      ClientTransport = rtsp:parse_transport(ClientHeader),
+      ClientAddress = rtsp_connection:get_client_address(Connection),
       
-      {SessionId, ServerTransport, NewState} = setup_stream(Headers, StreamName, ClientTransport, State),
+      {SessionId, ServerTransport, NewState} = 
+        setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State),
       ServerHeader = rtsp:format_transport(ServerTransport),
       ServerHeaders = [
         {?RTSP_HEADER_TRANSPORT, ServerHeader},
@@ -173,7 +180,7 @@ handle_request(record, Sequence, Request, Headers, <<>>, Connection, State) ->
   case SessionPath of
     Path -> 
       lists:foreach(
-        fun(Pid) -> Pid ! play end,
+        fun(Pid) -> Pid ! enable end,
         Client#client.channels
       ),
       SessionId = stringutils:int_to_string(Client#client.id),
@@ -192,10 +199,10 @@ handle_request(_Method, Sequence, _Request, _Headers, <<>>, Connection, State) -
 %% ----------------------------------------------------------------------------
 %% @doc Creates RTP distribution channels for each stream in the session
 %%      description.
-%% @spec create_channels(Desc) -> Result
-%%       Desc = sdp_stream_description()
-%%       Result = {ok, ChannelMap} | error
-%%       ChannelMap = dictionary()  
+%% @spec create_channels(Desc) -> Result where
+%%       Desc = sdp_stream_description(),
+%%       Result = {ok, ChannelMap} | error,
+%%       ChannelMap = dictionary()
 %% @end
 %% ----------------------------------------------------------------------------
 create_channels(_Desc = #session_description{streams = Streams, 
@@ -230,7 +237,10 @@ create_channels(_Desc = #session_description{streams = Streams,
 
 % Handles the inbound stream case - setting up the stream manager and getting
 % it ready to receive RTP data from the broadcaster
-setup_stream(Headers, StreamName, ClientTransport, State) ->
+setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State) ->
+  
+  ?LOG_DEBUG("ems_session:setup_stream/5", []),
+  
   case dict:find(StreamName, State#state.channels) of
     {ok, ChannelPid} -> 
       Direction = case lists:keyfind(direction, 1, ClientTransport) of
@@ -242,7 +252,8 @@ setup_stream(Headers, StreamName, ClientTransport, State) ->
       
       case Direction of 
         inbound ->
-          {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport),
+          ?LOG_DEBUG("ems_session:setup_stream/5 - setting up inbound stream", []),
+          {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport, ClientAddress),
           SessionHeader = stringutils:int_to_string(Client#client.id),
           {SessionHeader, ServerTransport, save_subscription(Client, ChannelPid, NewState)};
           
