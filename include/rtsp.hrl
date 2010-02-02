@@ -48,6 +48,7 @@
 -define(RTSP_HEADER_TRANSPORT,      "Transport").
 -define(RTSP_HEADER_SESSION,        "Session").
 -define(RTSP_HEADER_RANGE,          "Range").
+-define(RTSP_HEADER_RTP_INFO,       "RTP-Info").
 
 -define(RTSP_STATUS_OK, {200, "OK"}).
 -define(RTSP_STATUS_SERVER_ERROR, {500, "Internal Server Error"}).

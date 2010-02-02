@@ -55,9 +55,7 @@ receiver_entrypoint(TransportSpec, RemoteAddress, OwnerPid) ->
   {client_port, [ClientRtpPort, ClientRtcpPort]} = 
     lists:keyfind(client_port, 1, TransportSpec),
   
-  {ok, RtpSocket} = gen_udp:open(0, [binary, {active, true}]),
-  {ok, RtcpSocket} = gen_udp:open(0, [binary, {active, true}]),
-
+  {ok, RtpSocket, RtcpSocket} = rtp:create_socket_pair([binary, {active, true}]),
   {ok, {Host, RtpPort}} = inet:sockname(RtpSocket),
   {ok, RtcpPort} = inet:port(RtcpSocket),
   
@@ -102,9 +100,9 @@ receiver_loop(State, RtpSocket, RtcpSocket) ->
   %      NewState = send_rtcp_rr(State, RtcpSocket),
   %      receiver_loop(NewState, RtpSocket, RtcpSocket);
       
-      send_rtcp_rr ->
-        NewState = send_rtcp_rr(State, RtcpSocket),
-        receiver_loop(NewState, RtpSocket, RtcpSocket);
+  %    send_rtcp_rr ->
+  %      NewState = send_rtcp_rr(State, RtcpSocket),
+  %      receiver_loop(NewState, RtpSocket, RtcpSocket);
         
       {udp, RtpSocket, Host, Port, Data} ->
         NewState = handle_rtp_packet(State, Host, Port, Data),

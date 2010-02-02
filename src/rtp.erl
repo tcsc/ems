@@ -1,6 +1,6 @@
 -module(rtp).
 -include ("rtp.hrl").
--export ([parse/1]).
+-export ([parse/1, create_socket_pair/1]).
 
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary data buffer into an RTP packet record.
@@ -39,4 +39,21 @@ parse(Packet) when is_binary(Packet) ->
       
     _ -> false
   end.
-    
+  
+%% ----------------------------------------------------------------------------
+%% @doc Creates a pair of UDP sockets that differ only by a single port number,
+%%      for use with RTP 
+%% @end
+%% ----------------------------------------------------------------------------
+create_socket_pair(SockOpts) ->
+  {ok, RtpSocket} = gen_udp:open(0, SockOpts),
+  {ok, RtpPort} = inet:port(RtpSocket),
+  case gen_udp:open(RtpPort+1, SockOpts) of
+    {ok, RtcpSocket} -> 
+      {ok, RtpSocket, RtcpSocket};
+      
+    _ -> 
+      gen_udp:close(RtpSocket),
+      create_socket_pair(SockOpts)
+  end.
+      

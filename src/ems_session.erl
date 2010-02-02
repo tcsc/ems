@@ -8,8 +8,8 @@
 %% Definitions
 %% ============================================================================
 -record(state, {id, path, owner, description, channels, clients = dict:new()}).
-
--record(client, {id, channels = []}).
+-record(client, {id, subscriptions = []}).
+-record(subscription, {pid, path}).
 
 %% ============================================================================
 %% gen_server callbacks
@@ -179,12 +179,26 @@ handle_request(record, Sequence, Request, Headers, <<>>, Connection, State) ->
   Client = get_client(Headers, State),
   case SessionPath of
     Path -> 
-      lists:foreach(
-        fun(Pid) -> Pid ! enable end,
-        Client#client.channels
-      ),
+      UrlList = lists:map(
+        fun( S ) -> 
+          Handler = S#subscription.pid,
+          P =  S#subscription.path,
+          
+          ?LOG_DEBUG("ems_session:handle_request/7 - Enabling  subscription on ~s", 
+            [P]),
+          Handler ! enable,
+        
+          RtpInfoValue = io_lib:format("uri=~s/~s", [Uri, P]),
+          lists:flatten(RtpInfoValue)
+                  end,
+        Client#client.subscriptions),
+        
       SessionId = stringutils:int_to_string(Client#client.id),
-      ResponseHeaders = [{?RTSP_HEADER_RANGE, "npt=now-"}, {?RTSP_HEADER_SESSION, SessionId}],
+      ResponseHeaders = [
+        {?RTSP_HEADER_RTP_INFO, string:join(UrlList, ",")},
+        {?RTSP_HEADER_RANGE, "npt=now-"}, 
+        {?RTSP_HEADER_SESSION, SessionId}
+      ],
       rtsp_connection:send_response(Connection, Sequence, ok, ResponseHeaders, <<>>);
     
     _ -> 
@@ -255,7 +269,7 @@ setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State) ->
           ?LOG_DEBUG("ems_session:setup_stream/5 - setting up inbound stream", []),
           {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport, ClientAddress),
           SessionHeader = stringutils:int_to_string(Client#client.id),
-          {SessionHeader, ServerTransport, save_subscription(Client, ChannelPid, NewState)};
+          {SessionHeader, ServerTransport, save_subscription(Client, StreamName, ChannelPid, NewState)};
           
         outbound -> throw({ems_session, not_implemented})
       end;
@@ -306,10 +320,12 @@ get_client(SessionId, State) when is_integer(SessionId) ->
 %%----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------      
-save_subscription(_Client = #client{id=ClientId, channels=Channels}, SubscribedPid, State) ->
-  NewChannels = [SubscribedPid | Channels],
+save_subscription(Client, StreamPath, SubscribedPid, State) ->
+  ClientId = Client#client.id,
+  Subs = Client#client.subscriptions,
+  NewSubs = [#subscription{pid=SubscribedPid, path=StreamPath} | Subs],
   NewClients = dict:update(ClientId, 
-    fun( C ) -> C#client{channels = NewChannels} end,
+    fun( C ) -> C#client{subscriptions = NewSubs} end,
     State#state.clients),
   State#state{clients=NewClients}.
   
