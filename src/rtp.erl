@@ -1,5 +1,6 @@
 -module(rtp).
 -include ("rtp.hrl").
+-include ("erlang_media_server.hrl").
 -export ([parse/1, create_socket_pair/1]).
 
 %% ----------------------------------------------------------------------------
@@ -18,7 +19,7 @@ parse(Packet) when is_binary(Packet) ->
       RtpHeaderLen = (12 + (4*SyncSrcCount)),
       StartOfPayload = RtpHeaderLen + case Extension of
         1 ->
-          <<_:RtpHeaderLen/binary, _:16/big, Length:16/big>> = Packet,
+          <<_:RtpHeaderLen/binary, _:16/big, Length:16/big, _/binary>> = Packet,
           4 + Length;
         0 -> 0
       end,

@@ -181,13 +181,10 @@ handle_rtp_packet(State, Host, Port, Data) ->
 %%
 %% ---------------------------------------------------------------------------- 
 handle_rtcp_packet(State, Host, Port, Data) ->
-  ?LOG_DEBUG("rtp_receiver:handle_rtcp_packet/4 - ~p bytes from ~p:~p", 
-    [size(Data), Host, Port]),
-  State.
-%  case rtcp:parse(Data) of
-%    {ok, Packets} -> State;
-%    false -> State
-%  end.
+  case rtcp:parse(Data) of
+    {ok, Packets} -> State;
+    false -> State
+  end.
 
 %% ---------------------------------------------------------------------------- 
 %% @doc Tidies up as the process exits

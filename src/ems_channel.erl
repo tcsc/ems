@@ -16,7 +16,7 @@
   code_change/3
 	]).
 	
--export ([start_link/2, configure_input/3]).
+-export ([start_link/2, configure_input/3, stop/1]).
 
 %% ============================================================================
 %% @doc Creates and starts a new media distribution channel
@@ -46,6 +46,13 @@ configure_input(Pid, Transport, ClientAddress) ->
     exit:{timeout,_} -> {error, timeout};
 	  _Type:Err -> {error, Err}
   end.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------  
+stop(Pid) ->
+  ?LOG_DEBUG("ems_channel:stop/1", []),
+  gen_server:cast(Pid, {stop_chanel, self()}).
   
 %% ============================================================================
 %% gen_server callbacks
@@ -57,6 +64,7 @@ configure_input(Pid, Transport, ClientAddress) ->
 init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
   ?LOG_DEBUG("ems_channel:init/1 - starting channel for ~s", 
     [Stream#media_stream.control_uri]),
+  process_flag(trap_exit, true),
   {ok, Args}.
 
 %% ----------------------------------------------------------------------------
@@ -84,6 +92,9 @@ handle_call(_Request, _From, State) ->
 %% @spec handle_cast(Request,From,State) -> {noreply,State}
 %% @end
 %% ----------------------------------------------------------------------------  
+handle_call({stop_channel, _From}, State) ->
+  {stop, graceful_exit, State}.
+
 handle_cast(_Request, State) ->
 	?LOG_DEBUG("ems_channel:handle_cast/2 ~w",[_Request]),
 	{noreply, State}.

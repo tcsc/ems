@@ -47,6 +47,12 @@ start_link(Id, Path, OwnerPid) ->
 %% ----------------------------------------------------------------------------  
 receive_rtsp_request(SessionPid, Request, Headers, Body, ConnectionPid) ->
   gen_server:cast(SessionPid, {rtsp_request, Request, Headers, Body, ConnectionPid}).
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------    
+stop(SessionPid) ->
+  gen_server:cast(SessionPid, {stop_session, self()}).
   
 %% ============================================================================
 %% Server Callbacks
@@ -54,6 +60,7 @@ receive_rtsp_request(SessionPid, Request, Headers, Body, ConnectionPid) ->
 
 init({Id, Path, OwnerPid}) ->
   ?LOG_DEBUG("ems_session:init/3 - ~s", [Path]),
+  process_flag(trap_exit, true),
   State = #state{id=Id, path=Path, owner=OwnerPid},
   {ok, State}.
   
@@ -88,6 +95,9 @@ handle_cast({rtsp_request, Request, Headers, Body, Connection}, State) ->
       rtsp_connection:send_server_error(Connection, Error, Sequence),
       {noreply, State}
   end;
+ 
+handle_cast({stop_session, _From}, State) ->
+  {stop, graceful_shutdown, State};
   
 handle_cast(_Request, State) ->
   {noreply, State}.
@@ -101,7 +111,9 @@ handle_info(_Info, State) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
+  ?LOG_DEBUG("ems_session:terminate/2 - ~p", [_Reason]),
+  destroy_channels(State),
   ok.
 
 %% ----------------------------------------------------------------------------
@@ -179,19 +191,19 @@ handle_request(record, Sequence, Request, Headers, <<>>, Connection, State) ->
   Client = get_client(Headers, State),
   case SessionPath of
     Path -> 
-      UrlList = lists:map(
-        fun( S ) -> 
-          Handler = S#subscription.pid,
-          P =  S#subscription.path,
-          
-          ?LOG_DEBUG("ems_session:handle_request/7 - Enabling  subscription on ~s", 
-            [P]),
-          Handler ! enable,
+      F = fun( S ) ->
+        Handler = S#subscription.pid,
+        P =  S#subscription.path,
+      
+        ?LOG_DEBUG("ems_session:handle_request/7 - Enabling  subscription on ~s", 
+          [P]),
+        Handler ! enable,
+    
+        RtpInfoValue = io_lib:format("uri=~s/~s", [Uri, P]),
+        lists:flatten(RtpInfoValue)
+      end,
         
-          RtpInfoValue = io_lib:format("uri=~s/~s", [Uri, P]),
-          lists:flatten(RtpInfoValue)
-                  end,
-        Client#client.subscriptions),
+      UrlList = lists:map(F, Client#client.subscriptions),
         
       SessionId = stringutils:int_to_string(Client#client.id),
       ResponseHeaders = [
@@ -205,6 +217,38 @@ handle_request(record, Sequence, Request, Headers, <<>>, Connection, State) ->
       _StreamName = string:substr(Path, length(SessionPath)+2)
   end,
   State;
+  
+handle_request(teardown, Sequence, Request, Headers, Body, Connection, State) ->
+  ?LOG_DEBUG("ems_session:handle_request/7 - TEARDOWN", []),
+  
+  Uri = Request#rtsp_request.uri,
+  {_,_,_,Path} = url:parse(Uri),
+  SessionPath = State#state.path,
+  
+  Client = get_client(Headers, State),
+  NewState = case SessionPath of
+    Path -> 
+      F = fun(S) -> 
+        Handler = S#subscription.pid,
+        Handler ! stop
+      end,
+      lists:map(F, Client#client.subscriptions),
+      Clients = dict:erase(Client#client.id, State#state.clients),
+      State#state{clients = Clients};
+        
+    _ -> ok
+  end,
+  
+  if
+    Client#client.id == State#state.id ->
+      ?LOG_DEBUG("ems_session:handle_request/7 - TEARDOWN - broadcasting session", []),
+      stop(self());
+      
+    true -> ok
+  end,
+  
+  rtsp_connection:send_response(Connection, Sequence, ok, [], <<>>),
+  NewState;
 
 handle_request(_Method, Sequence, _Request, _Headers, <<>>, Connection, State) ->
   rtsp_connection:send_response(Connection, Sequence, not_implemented, [], <<>>),
@@ -239,6 +283,14 @@ create_channels(_Desc = #session_description{streams = Streams,
 	{ok, dict:from_list(Result)}.
 	
 %% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------	
+destroy_channels(State) ->
+  F = fun(Stream, Channel) -> ems_channel:stop(Channel) end,
+  dict:map(F, State#state.channels),
+  ok.
+  
+%% ----------------------------------------------------------------------------
 %% @doc Sets up an RTP data stream
 %% @spec setup_stream(ClientSessionId, Direction, StreamName, Transport, State) -> Result
 %%       Direction = inbound | outbound
@@ -261,12 +313,12 @@ setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State) ->
         {direction, Dir} -> Dir;
         false -> outbound
       end,
-            
-      {Client, NewState} = get_or_create_client(Headers, State),
-      
+                  
       case Direction of 
         inbound ->
           ?LOG_DEBUG("ems_session:setup_stream/5 - setting up inbound stream", []),
+          {Client, NewState} = get_or_create_client(Headers, State#state.id, State),
+          
           {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport, ClientAddress),
           SessionHeader = stringutils:int_to_string(Client#client.id),
           {SessionHeader, ServerTransport, save_subscription(Client, StreamName, ChannelPid, NewState)};
@@ -280,10 +332,21 @@ setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State) ->
 
 %%----------------------------------------------------------------------------
 %% @spec get_or_create_client(Headers, State) -> {Client, NewState}
+%% @end
 %%----------------------------------------------------------------------------
 get_or_create_client(Headers, State) ->
   case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
-    undefined -> create_client(State);
+    undefined -> create_client(State, random:uniform(99999999));
+    SessionId -> {get_client(SessionId, State), State}
+  end.
+
+%%----------------------------------------------------------------------------
+%% @spec
+%% @end
+%%----------------------------------------------------------------------------
+get_or_create_client(Headers, Id, State) ->
+  case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
+    undefined -> create_client(State, Id);
     SessionId -> {get_client(SessionId, State), State}
   end.
 
@@ -291,8 +354,7 @@ get_or_create_client(Headers, State) ->
 %% @spec create_client(State) -> {Client, NewState}
 %% @end
 %% ----------------------------------------------------------------------------
-create_client(State) ->
-  Id = random:uniform(99999999),
+create_client(State, Id) ->
   OldClients = State#state.clients,
   Client = #client{id = Id},
   NewState = State#state{clients = dict:store(Id, Client, OldClients)}, 
