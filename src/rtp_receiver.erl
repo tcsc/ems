@@ -5,6 +5,13 @@
 -include ("rtp.hrl").
 -include ("rtcp.hrl").
 
+-record(stats, {rx_packets = 0,
+                rx_bytes = 0,
+                wrap_count_ts = 0,
+                wrap_count_seq = 0,
+                max_seq,
+                max_ts}).
+
 -record(state, {owner_pid, 
                 enabled = false, 
                 sync_src,
@@ -13,7 +20,9 @@
                 client_addr,
                 client_rtp_port,
                 client_rtcp_port,
-                packets_received = 0}).
+                stats = #stats{}}).
+
+-define (RTP_TIMESTAMP_WRAP_PIVOT, 16#FFFF).
 
 %% ---------------------------------------------------------------------------- 
 %% @spec start_link(TransportSpec) -> Result
@@ -141,9 +150,9 @@ handle_enable(State) ->
 %% ---------------------------------------------------------------------------- 
 %% @spec handle_enable(State) -> NewState
 %% ----------------------------------------------------------------------------
-send_rtcp_rr(State, RtcpSocket) ->
+send_rtcp_rr(State = #state{stats = Stats}, RtcpSocket) ->
   ?LOG_DEBUG("rtp_receiver:send_rtcp_rr/2", []),
-  case State#state.packets_received of
+  case Stats#stats.rx_packets of
     0 -> 
       Packet = rtcp:format_short_rr(State#state.sync_src),
       gen_udp:send(RtcpSocket,
@@ -165,15 +174,29 @@ ntp_now(Now) ->
 %% ----------------------------------------------------------------------------   
 handle_rtp_packet(State, Host, Port, Data) ->
   case rtp:parse(Data) of
+    % looks like an RTP packet at first blush 
     {ok, RtpPacket} when is_record(RtpPacket, rtp_packet) ->
-      ?LOG_DEBUG("rtp_receiver:handle_rtp_packet/4 - type ~w #~w ~w bytes", 
-        [RtpPacket#rtp_packet.payload_type, 
-         RtpPacket#rtp_packet.sequence,
-         size(Data)]),
-         
-      State;
-    
-    false -> % not obviously an RTP packet
+      % expand the rtp sequence number & timestamp, and do a rudimentary
+      % duplicate packet test. Obvious duplicates will be swallowed.
+      case expand_sequence_number(RtpPacket, State) of
+         duplicate -> 
+           State;
+
+         {ExpSeq, NewMaxSeq, NewWrapCountSeq} ->
+           {ExpTS, NewMaxTS, NewWrapCountTS} = expand_timestamp(RtpPacket, State),
+
+           % generate a new state record with the updated values
+           Stats = State#state.stats,
+           NewStats = Stats#stats{max_seq = NewMaxSeq,
+                                  wrap_count_seq = NewWrapCountSeq,
+                                  max_ts = NewMaxTS,
+                                  wrap_count_ts =  NewWrapCountTS,
+                                  rx_bytes = Stats#stats.rx_bytes + size(Data),
+                                  rx_packets = Stats#stats.rx_packets + 1},
+          State#state{stats = NewStats}
+       end;
+      
+    false -> %  obviously not an RTP packet
       State
   end.
   
@@ -193,6 +216,78 @@ cleanup(State) ->
   case State#state.rtcp_timer of
     Timer when is_pid(Timer) -> timer:stop(Timer);
     undefined -> ok
+  end. 
+
+%% ---------------------------------------------------------------------------- 
+%%
+%% ---------------------------------------------------------------------------- 
+expand_timestamp(RtpPacket = #rtp_packet{timestamp = PacketTS}, 
+                 State = #state{stats = Stats}) ->
+         
+  case Stats#stats.max_ts of 
+    undefined ->
+      {PacketTS, PacketTS, 0};
+      
+    MaxTS ->  
+      WrapCount = Stats#stats.wrap_count_ts,
+      Delta = PacketTS - MaxTS,
+  
+      {ExpandedPacketTS, NewHighestTimestamp, WrapCount} = if
+        % same or forwards jump - handle normally...
+        Delta >= 0 ->
+          ExpandedTS = (WrapCount bsl 32) + PacketTS,
+          {ExpandedTS, PacketTS, WrapCount};
+            
+        % minor backwards jump - assume that we have a late-arriving packet
+        -Delta < ?RTP_TIMESTAMP_WRAP_PIVOT ->
+          ExpandedTS = (WrapCount bsl 32) + PacketTS,
+          {ExpandedTS, MaxTS, WrapCount};
+
+        % massive backwards jump - assume that we have wrapped 
+        true ->
+          NewWrapCount = WrapCount + 1,
+          ExpandedTS = (NewWrapCount bsl 32) + PacketTS,
+          {ExpandedTS, PacketTS, NewWrapCount}
+      end
+  end.
+  
+%% ----------------------------------------------------------------------------   
+%% @spec expand_sequence_number(Packet, State) -> Result
+%% where
+%%   Result = duplicate | SequenceInfo
+%%   SequenceInfo = {ExtendedSequenceNumber, NewHighestSequence, NewWrapCount}
+%% @end
+%% ---------------------------------------------------------------------------- 
+expand_sequence_number(Packet = #rtp_packet{sequence = PacketSequence}, 
+                       State = #state{stats = Stats}) ->
+                         
+  case Stats#stats.max_seq of
+    undefined ->
+      {PacketSequence, PacketSequence, 0};
+      
+    MaxSeq ->
+      WrapCount = Stats#stats.wrap_count_seq,
+      Delta = PacketSequence - MaxSeq,
+  
+      if 
+        Delta == 0 ->
+          duplicate;
+      
+        Delta >= 1 ->
+          ExpandedSeq = (WrapCount bsl 16) + PacketSequence,
+          {ExpandedSeq, PacketSequence, WrapCount};
+      
+        % small(ish) jump backwards - probably just a missing packet or two
+        -Delta =< 16#7FFF ->
+          ExpandedSeq = (WrapCount bsl 16) + PacketSequence,
+          {ExpandedSeq, MaxSeq, WrapCount};
+  
+        % massive jump backwards - probably a wrap
+        true ->
+          NewWrapCount = WrapCount + 1,
+          ExpandedSeq = (NewWrapCount bsl 16) + PacketSequence,
+          {ExpandedSeq, PacketSequence, NewWrapCount}
+      end
   end.
 
 %% ---------------------------------------------------------------------------- 
