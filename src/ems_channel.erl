@@ -75,8 +75,11 @@ init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
 %% ----------------------------------------------------------------------------
 handle_call({configure, TransportSpec, ClientAddress}, _From, State) ->
   ?LOG_DEBUG("ems_channel:handle_call/3 - handling stream configure", []),
+
+  {_,RtpInfo} = State#state.rtpmap,
+  
   {RtpReceiverPid, ServerTransportSpec} = 
-    rtp_receiver:start_link(TransportSpec, ClientAddress),
+    rtp_receiver:start_link(RtpInfo#rtp_map.clock_rate, TransportSpec, ClientAddress),
                           
   ?LOG_DEBUG("ems_channel:handle_call/3 - Server Transport Spec: ~w", [ServerTransportSpec]),  
   NewState = State#state{receiver = RtpReceiverPid},
