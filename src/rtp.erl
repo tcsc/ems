@@ -11,6 +11,7 @@
 %%         Rtp_Packet = rtp_packet
 %% @end
 %% ----------------------------------------------------------------------------
+-spec parse(binary()) -> false | {ok, rtp_packet()}.
 parse(Packet) when is_binary(Packet) ->
   case Packet of 
     <<2:2, _Padding:1, Extension:1, SyncSrcCount:4, Marker:1, PayloadType:7,

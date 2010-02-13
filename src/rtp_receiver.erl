@@ -1,33 +1,36 @@
 -module (rtp_receiver).
 -export ([start_link/3, receiver_entrypoint/4, enable/1]).
 
+-include_lib("kernel/include/inet.hrl").
 -include ("erlang_media_server.hrl").
 -include ("rtp.hrl").
 -include ("rtcp.hrl").
 
--record(stats, {rx_packets = 0,
-                rx_bytes = 0,
-                wrap_count_ts = 0,
-                wrap_count_seq = 0,
-                max_seq,
-                max_ts, 
-                jitter,
-                last_packet_seq,
-                last_packet_ts,
-                last_packet_arrival}).
+-type wall_clock_time() :: non_neg_integer().
 
--record(state, {owner_pid, 
-                enabled = false, 
-                sync_src,
-                rtcp_timer,
-                last_rr,
-                client_addr,
-                client_rtp_port,
-                client_rtcp_port,
-                clock_rate,
-                stats = #stats{}}).
+-record(stats, {rx_packets          = 0 :: non_neg_integer(),
+                rx_bytes            = 0 :: non_neg_integer(),
+                wrap_count_ts       = 0 :: non_neg_integer(),
+                wrap_count_seq      = 0 :: non_neg_integer(),
+                max_seq             :: undefined | sequence_number(),
+                max_ts              :: undefined | timestamp(), 
+                jitter              :: undefined | float(),
+                last_packet_seq     :: undefined | sequence_number(),
+                last_packet_ts      :: undefined | timestamp(),
+                last_packet_arrival :: undefined | wall_clock_time()}).
+-type stats() :: #stats{}.
 
--define (RTP_TIMESTAMP_WRAP_PIVOT, 16#FFFF).
+-record(state, {owner_pid        :: pid(), 
+                enabled          = false :: boolean(), 
+                sync_src         :: non_neg_integer(),
+                rtcp_timer       :: undefined | reference(),
+                last_rr          :: undefined | timestamp(),
+                client_addr      :: ip_address(),
+                client_rtp_port  :: non_neg_integer(),
+                client_rtcp_port :: non_neg_integer(),
+                clock_rate       :: non_neg_integer(),
+                stats            = #stats{} :: stats()}).
+-type state() :: #state{}.
 
 %% ---------------------------------------------------------------------------- 
 %% @spec start_link(ClockRate, TransportSpec, ClientAddress) -> Result
@@ -102,7 +105,12 @@ receiver_entrypoint(ClockRate, TransportSpec, RemoteAddress, OwnerPid) ->
     RtcpSocket).
   
 %% ---------------------------------------------------------------------------- 
-%% 
+%% @spec receiver_loop(State, RtpSocket, RtcpSocket) ->
+%% where
+%%   State = state(),
+%%   RtpSocket = socket(),
+%%   RtcpSocket = socket()
+%% @end
 %% ----------------------------------------------------------------------------   
 receiver_loop(State, RtpSocket, RtcpSocket) ->
   try
@@ -148,10 +156,9 @@ enable(Receiver) -> Receiver ! enable.
 handle_enable(State) ->
   ?LOG_DEBUG("rtp_receiver:handle_enable/1 - starting RR timer", []),
   Timer = erlang:start_timer(1000, self(), send_rtcp_rr),
-  
- % ?LOG_DEBUG("rtp_receiver:handle_enable/1 - posting initial rr", []),
- self() ! send_rtcp_rr,
- State#state{rtcp_timer=Timer, enabled=true}.
+  % self() ! send_rtcp_rr,
+  NewState = State#state{rtcp_timer = Timer, enabled = true},
+  NewState.
 
 %% ---------------------------------------------------------------------------- 
 %% @spec handle_enable(State) -> NewState
@@ -177,7 +184,8 @@ ntp_now(Now) ->
 
 %% ---------------------------------------------------------------------------- 
 %%
-%% ----------------------------------------------------------------------------   
+%% ----------------------------------------------------------------------------
+-spec handle_rtp_packet(state(), ip_address(), integer(), binary()) -> state().
 handle_rtp_packet(State, Host, Port, Data) ->
   ArrivalTime = get_time(),
   
@@ -186,12 +194,12 @@ handle_rtp_packet(State, Host, Port, Data) ->
     {ok, RtpPacket} when is_record(RtpPacket, rtp_packet) ->
       % expand the rtp sequence number & timestamp, and do a rudimentary
       % duplicate packet test. Obvious duplicates will be swallowed.
-      case expand_sequence_number(RtpPacket, State) of
+      case expand_seq(RtpPacket, State) of
          duplicate -> 
            State;
 
          {ExpSeq, NewMaxSeq, NewWrapCountSeq} ->
-           {ExpTS, NewMaxTS, NewWrapCountTS} = expand_timestamp(RtpPacket, State),
+           {ExpTS, NewMaxTS, NewWrapCountTS} = expand_ts(RtpPacket, State),
            
            Jitter = jitter(RtpPacket, State, ArrivalTime),
            
@@ -228,16 +236,19 @@ handle_rtcp_packet(State, Host, Port, Data) ->
 %% ---------------------------------------------------------------------------- 
 cleanup(State) ->
   case State#state.rtcp_timer of
-    Timer when is_pid(Timer) -> timer:stop(Timer);
-    undefined -> ok
+    undefined -> false;
+    TimerRef -> elrang:cancel_timer(TimerRef)
   end. 
 
-%% ---------------------------------------------------------------------------- 
-%%
-%% ---------------------------------------------------------------------------- 
-expand_timestamp(RtpPacket = #rtp_packet{timestamp = PacketTS}, 
-                 State = #state{stats = Stats}) ->
-         
+%% ----------------------------------------------------------------------------
+%% @doc Expands the RTP pacet timestamp, accounting for wrapping and suchlike.
+%% @end
+%% ----------------------------------------------------------------------------
+-spec expand_ts(rtp_packet(), state()) -> 
+  {integer(), integer(), integer()}.
+  
+expand_ts(RtpPacket = #rtp_packet{timestamp = PacketTS}, 
+          State = #state{stats = Stats}) ->  
   case Stats#stats.max_ts of 
     undefined ->
       {PacketTS, PacketTS, 0};
@@ -246,14 +257,14 @@ expand_timestamp(RtpPacket = #rtp_packet{timestamp = PacketTS},
       WrapCount = Stats#stats.wrap_count_ts,
       Delta = PacketTS - MaxTS,
   
-      {ExpandedPacketTS, NewHighestTimestamp, WrapCount} = if
+      if
         % same or forwards jump - handle normally...
         Delta >= 0 ->
           ExpandedTS = (WrapCount bsl 32) + PacketTS,
           {ExpandedTS, PacketTS, WrapCount};
             
         % minor backwards jump - assume that we have a late-arriving packet
-        -Delta < ?RTP_TIMESTAMP_WRAP_PIVOT ->
+        -Delta < 16#7FFFFFFF ->
           ExpandedTS = (WrapCount bsl 32) + PacketTS,
           {ExpandedTS, MaxTS, WrapCount};
 
@@ -265,15 +276,14 @@ expand_timestamp(RtpPacket = #rtp_packet{timestamp = PacketTS},
       end
   end.
   
-%% ----------------------------------------------------------------------------   
-%% @spec expand_sequence_number(Packet, State) -> Result
-%% where
-%%   Result = duplicate | SequenceInfo
-%%   SequenceInfo = {ExtendedSequenceNumber, NewHighestSequence, NewWrapCount}
-%% @end
+%% ----------------------------------------------------------------------------
+%% {ExpandedSequence, HighestSequence, WrapCount}  
 %% ---------------------------------------------------------------------------- 
-expand_sequence_number(_Packet = #rtp_packet{sequence = PacketSequence}, 
-                       _State = #state{stats = Stats}) ->
+-spec expand_seq(rtp_packet(), state()) -> 
+  duplicate | {sequence_number(), sequence_number(), non_neg_integer()}.
+
+expand_seq(_Packet = #rtp_packet{sequence = PacketSequence}, 
+           _State = #state{stats = Stats}) ->
                          
   case Stats#stats.max_seq of
     undefined ->
@@ -314,12 +324,13 @@ expand_sequence_number(_Packet = #rtp_packet{sequence = PacketSequence},
 %%   Jitter = Number
 %% @end 
 %% ----------------------------------------------------------------------------
+-spec jitter(rtp_packet(), state(), wall_clock_time()) -> float().
 jitter(Packet = #rtp_packet{timestamp = ThisPacketTS}, 
        State = #state{stats = Stats}, 
        ThisPacketArrivalTime) ->
   case Stats#stats.jitter of 
     undefined ->
-      0;
+      0.0;
       
     Jitter ->
       LastPacketArrivalTime = Stats#stats.last_packet_arrival,
@@ -327,11 +338,14 @@ jitter(Packet = #rtp_packet{timestamp = ThisPacketTS},
       RtpInterval = ThisPacketTS - LastPacketTS,
       RealInterval = clock_time_to_rtp_time(ThisPacketArrivalTime - LastPacketArrivalTime, State),
       Delta = abs(RealInterval - RtpInterval),
-      Jitter + ((Delta - Jitter) / 16),
+      Jitter + ((Delta - Jitter) / 16)
   end.
 
-%% ---------------------------------------------------------------------------- 
+%% ----------------------------------------------------------------------------
+%% @doc Gets the current time in microseconds
+%% @end
 %% ----------------------------------------------------------------------------   
+-spec get_time() -> wall_clock_time().
 get_time() ->
   {MegaSeconds, Seconds, MicroSeconds} = now(),
   (((MegaSeconds * 1000000) + Seconds) * 1000000) + MicroSeconds.

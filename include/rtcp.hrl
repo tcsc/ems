@@ -30,3 +30,5 @@
                    jitter, 
                    last_sr, 
                    last_sr_timestamp}).
+                   
+-type rtcp_packet() :: #rtcp_sr{} | #rtcp_sdes{} | #rtcp_rr{}. 

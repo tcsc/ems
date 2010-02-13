@@ -3,21 +3,16 @@
 -export ([parse/1]).
 
 %% ----------------------------------------------------------------------------
-%% @spec parse
 %% ----------------------------------------------------------------------------
+-spec parse(binary()) -> {ok, [rtcp_packet()]} | false.
 parse(Data) ->
   parse(Data, 0, []).
 
 %% ----------------------------------------------------------------------------
-%% @spec parse(Data, Offset, Packets) -> Result
-%% where
-%%   Data = binary()
-%%   Offset = int
-%%   Result = {ok, Packets}
-%%   Packets = [Packet]
-%%   Packet = rtcp_sr() | rtcp_sdes() 
-%% @end
-%% ----------------------------------------------------------------------------  
+%% ---------------------------------------------------------------------------- 
+-spec parse(binary(), integer(), [rtcp_packet()]) -> 
+  {ok, [rtcp_packet()]} | false .
+  
 parse(Data, Offset, Packets) when Offset < size(Data) ->
   case Data of
     <<_:Offset/binary, 2:2, _Padding:1, _ReceptionCount:5, PacketType:8, WordCount:16/big, _/binary>> ->
@@ -28,8 +23,8 @@ parse(Data, Offset, Packets) when Offset < size(Data) ->
       end,
       parse(Data, Offset + PayloadSize + 4, NewPackets);
   
-    _ -> % failed to extract an RTCP header - bail out with what we've got
-      {ok, lists:reverse(Packets)}
+    _ -> % failed to extract an RTCP header - fail whale!
+      false
   end;
   
 parse(Data, Offset, Packets) ->
