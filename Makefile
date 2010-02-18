@@ -16,8 +16,11 @@ APP_SRC=$(ESRC)/$(APP_NAME).app.src
 all: $(APP_TARGET)
 	$(ERL) -make $(ERL_COMPILE_FLAGS)
 	
+run: all
+	erl -pa ebin -run ems
+
 debug: all
-	erl -pa ebin -smp auto -run debugger -run ems
+	erl -pa ebin -run ems debug debugger.State
 	# -run appmon 
 	# -noshell
 	

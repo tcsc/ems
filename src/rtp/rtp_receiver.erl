@@ -4,9 +4,6 @@
 -include_lib("kernel/include/inet.hrl").
 -include ("erlang_media_server.hrl").
 -include ("rtp.hrl").
--include ("rtcp.hrl").
-
--type wall_clock_time() :: non_neg_integer().
 
 -record(stats, {rx_packets          = 0 :: non_neg_integer(),
                 rx_bytes            = 0 :: non_neg_integer(),
@@ -23,8 +20,9 @@
 -record(state, {owner_pid        :: pid(), 
                 enabled          = false :: boolean(), 
                 sync_src         :: non_neg_integer(),
-                rtcp_timer       :: undefined | reference(),
-                last_rr          :: undefined | timestamp(),
+                rtcp_timer       :: 'undefined' | reference(),
+                last_sr_ts       :: 'undefined' | ntp_timestamp(),
+                last_sr_arrival  :: 'undefined' | wall_clock_time(),
                 client_addr      :: ip_address(),
                 client_rtp_port  :: non_neg_integer(),
                 client_rtcp_port :: non_neg_integer(),
@@ -119,20 +117,22 @@ receiver_loop(State, RtpSocket, RtcpSocket) ->
         NewState = handle_enable(State),
         receiver_loop(NewState, RtpSocket, RtcpSocket);
       
-  %    {timeout, TimerRef, send_rtcp_rr} ->
-  %      NewState = send_rtcp_rr(State, RtcpSocket),
-  %      receiver_loop(NewState, RtpSocket, RtcpSocket);
-      
-  %    send_rtcp_rr ->
-  %      NewState = send_rtcp_rr(State, RtcpSocket),
-  %      receiver_loop(NewState, RtpSocket, RtcpSocket);
-        
+      send_rtcp_rr ->
+        NewState = send_rtcp_rr(State, RtcpSocket),
+        receiver_loop(NewState, RtpSocket, RtcpSocket);
+              
       {udp, RtpSocket, Host, Port, Data} ->
         NewState = handle_rtp_packet(State, Host, Port, Data),
         receiver_loop(NewState, RtpSocket, RtcpSocket);
       
       {udp, RtcpSocket, Host, Port, Data} ->
-        NewState = handle_rtcp_packet(State, Host, Port, Data),
+        NewState = case rtcp:parse(Data) of
+          {ok, Packets} -> lists:foldl(
+            fun(P, S) -> handle_rtcp_packet(P, S) end,
+            State,
+            Packets);
+          false -> State
+        end,
         receiver_loop(NewState, RtpSocket, RtcpSocket);
         
       terminate -> 
@@ -155,32 +155,44 @@ enable(Receiver) -> Receiver ! enable.
 %% ----------------------------------------------------------------------------   
 handle_enable(State) ->
   ?LOG_DEBUG("rtp_receiver:handle_enable/1 - starting RR timer", []),
-  Timer = erlang:start_timer(1000, self(), send_rtcp_rr),
-  % self() ! send_rtcp_rr,
-  NewState = State#state{rtcp_timer = Timer, enabled = true},
-  NewState.
+  {ok, Timer} = timer:send_interval(1000, self(), send_rtcp_rr),
+  State#state{rtcp_timer = Timer, enabled = true}.
 
 %% ---------------------------------------------------------------------------- 
 %% @spec handle_enable(State) -> NewState
 %% ----------------------------------------------------------------------------
+-spec send_rtcp_rr(State :: state(), RtcpSocket :: inet:socket()) -> 
+  NewState :: state(). 
+
 send_rtcp_rr(State = #state{stats = Stats}, RtcpSocket) ->
   ?LOG_DEBUG("rtp_receiver:send_rtcp_rr/2", []),
-  case Stats#stats.rx_packets of
-    0 -> 
-      Packet = rtcp:format_short_rr(State#state.sync_src),
-      gen_udp:send(RtcpSocket,
-                   State#state.client_addr, 
+  
+  case State#state.last_sr_arrival of
+    LastSrArrival when is_integer(LastSrArrival) -> 
+      Delay = get_time() - LastSrArrival,
+      Packet = rtcp:format_rr(
+        State#state.sync_src,
+        extended_highest_sequence(Stats),
+        Stats#stats.rx_packets,
+        0,
+        Stats#stats.jitter,
+        State#state.last_sr_ts,
+        Delay),
+      gen_udp:send(RtcpSocket, 
+                   State#state.client_addr,
                    State#state.client_rtcp_port,
                    Packet);
-    _ -> 
+    undefined ->
       ok
   end,
   State.
   
-ntp_now(Now) ->
-  {MSec, Sec, USec} = Now,
+%% ----------------------------------------------------------------------------
+%%
+%% ---------------------------------------------------------------------------- 
+timestamp_to_ntp({MSec, Sec, USec}) ->
   Fraction = round( 16#FFFFFFFF * (USec / 1000000) ),
-  ((MSec + Sec) bsl 32) + Fraction.
+  ((MSec + Sec) bsl 32) + Fraction.  
 
 %% ---------------------------------------------------------------------------- 
 %%
@@ -199,7 +211,8 @@ handle_rtp_packet(State, Host, Port, Data) ->
            State;
 
          {ExpSeq, NewMaxSeq, NewWrapCountSeq} ->
-           {ExpTS, NewMaxTS, NewWrapCountTS} = expand_ts(RtpPacket, State),
+           {ExpTS, NewMaxTS, NewWrapCountTS} = 
+             expand_ts(RtpPacket#rtp_packet.timestamp, State),
            
            Jitter = jitter(RtpPacket, State, ArrivalTime),
            
@@ -222,14 +235,22 @@ handle_rtp_packet(State, Host, Port, Data) ->
       State
   end.
   
-%% ---------------------------------------------------------------------------- 
-%%
-%% ---------------------------------------------------------------------------- 
-handle_rtcp_packet(State, Host, Port, Data) ->
-  case rtcp:parse(Data) of
-    {ok, Packets} -> State;
-    false -> State
-  end.
+%% ----------------------------------------------------------------------------
+%% @doc Recursively traverses the list of rtcp packets and updates the rtp 
+%%      receiver state as it goes.
+%% @end
+%% ----------------------------------------------------------------------------
+-spec handle_rtcp_packet(Packet :: rtcp_packet(), State :: state()) -> state().
+
+handle_rtcp_packet(Packet, State) when is_record(Packet, rtcp_sr) ->
+  {ExpandedTS, _, _} = expand_ts(Packet#rtcp_sr.rtp_time, State),
+  NewState = State#state{
+    last_sr_ts = ExpandedTS,
+    last_sr_arrival = get_time()
+  },
+  NewState;
+  
+handle_rtcp_packet(_, State) -> State.
 
 %% ---------------------------------------------------------------------------- 
 %% @doc Tidies up as the process exits
@@ -237,17 +258,19 @@ handle_rtcp_packet(State, Host, Port, Data) ->
 cleanup(State) ->
   case State#state.rtcp_timer of
     undefined -> false;
-    TimerRef -> elrang:cancel_timer(TimerRef)
+    TimerRef -> timer:cancel(TimerRef)
   end. 
 
 %% ----------------------------------------------------------------------------
 %% @doc Expands the RTP pacet timestamp, accounting for wrapping and suchlike.
 %% @end
 %% ----------------------------------------------------------------------------
--spec expand_ts(rtp_packet(), state()) -> 
-  {integer(), integer(), integer()}.
+-spec expand_ts(timestamp(), state()) -> {
+  ExpandedTS :: timestamp(), 
+  HighestTS :: timestamp(), 
+  WrapCount:: integer()}.
   
-expand_ts(RtpPacket = #rtp_packet{timestamp = PacketTS}, 
+expand_ts(PacketTS,
           State = #state{stats = Stats}) ->  
   case Stats#stats.max_ts of 
     undefined ->
@@ -279,7 +302,7 @@ expand_ts(RtpPacket = #rtp_packet{timestamp = PacketTS},
 %% ----------------------------------------------------------------------------
 %% {ExpandedSequence, HighestSequence, WrapCount}  
 %% ---------------------------------------------------------------------------- 
--spec expand_seq(rtp_packet(), state()) -> 
+-spec expand_seq(Packet :: rtp_packet(), State :: state()) -> 
   duplicate | {sequence_number(), sequence_number(), non_neg_integer()}.
 
 expand_seq(_Packet = #rtp_packet{sequence = PacketSequence}, 
@@ -378,3 +401,12 @@ transport_type(TransportSpec) ->
       end
     end
   end.
+
+%% ----------------------------------------------------------------------------    
+%%
+%% ----------------------------------------------------------------------------    
+-spec extended_highest_sequence(stats()) -> integer().
+
+extended_highest_sequence(_Stats = #stats{max_seq = MaxSeq, 
+                                        wrap_count_seq = WrapCount}) ->
+  (WrapCount bsl 32) + MaxSeq.

@@ -1,6 +1,6 @@
 -module (rtcp).
--include ("rtcp.hrl").
--export ([parse/1]).
+-include ("rtp.hrl").
+-export ([parse/1, format_rr/7]).
 
 %% ----------------------------------------------------------------------------
 %% ----------------------------------------------------------------------------
@@ -27,23 +27,51 @@ parse(Data, Offset, Packets) when Offset < size(Data) ->
       false
   end;
   
-parse(Data, Offset, Packets) ->
+parse(_Data, _Offset, Packets) ->
   {ok, lists:reverse(Packets)}.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-format_rr() -> <<>>.
+-spec format_rr(SyncSrc :: non_neg_integer(), 
+                MaxSequence :: non_neg_integer(),
+                ExpectedPackets :: non_neg_integer(),
+                LostPackets :: non_neg_integer(),
+                Jitter :: integer(),
+                LastSR :: ntp_timestamp(), 
+                Delay :: wall_clock_time() ) -> binary().
 
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------    
-format_short_rr(SyncSrc) ->
-  <<2:2, 0:1, 0:5, ?RTCP_RECEIVER_REPORT:8, 1:16/big, SyncSrc:32/big>>.
+format_rr(SyncSrc, MaxSequence, ExpectedPackets, LostPackets, Jitter, LastSR, Delay) -> 
+  LossFraction = if
+    LostPackets =< 0 -> 0;
+    true -> trunc((ExpectedPackets / LostPackets) * 256)
+  end,
   
+  JitterP = trunc(Jitter),
+  
+  SrId = (LastSR bsr 16),
+
+  <<2:2,                             % version 
+    0:1,                             % padding
+    1:5,                             % RC
+    ?RTCP_RECEIVER_REPORT:8,         % PacketType
+    7:16/big-unsigned-integer,       % PacketLength
+    SyncSrc:32/big-unsigned-integer, % SyncSrc
+    
+    SyncSrc:32/big-unsigned-integer, % SyncSrc
+    LossFraction:8,
+    LostPackets:24/big-unsigned-integer,
+    MaxSequence:32/big-unsigned-integer,
+    JitterP:32/big-unsigned-integer,
+    SrId:32/big-unsigned-integer,
+    Delay:32/big-unsigned-integer>>.
+                     
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
+-spec parse_packet(integer(), binary(), integer(), integer()) -> 
+  {ok, rtcp_packet()}.
+
 parse_packet(?RTCP_SENDER_REPORT, Data, Offset, _EndOfPacket) ->
   StartOfPayload = Offset + 4,
   <<_:StartOfPayload/binary,
@@ -70,7 +98,7 @@ parse_packet(_PacketType, _Data, _Offset, _WordCount) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
-parse_sdes_group(Offset, Data, Groups) ->
+parse_sdes_group(Offset, Data, _Groups) ->
   <<_:Offset/binary, SyncSrc:32/big, _/binary>> = Data,
   #rtcp_sdes{sync_src = SyncSrc, 
              items = parse_sdes_element(Offset + 4, Data, [])}.

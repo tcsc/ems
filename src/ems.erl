@@ -1,10 +1,15 @@
 -module(ems).
--export([start/0, stop/0]).
+-export([start/0, stop/0, debug/1]).
 -include("erlang_media_server.hrl").
 
-start()->
+debug([FileName]) ->
+  ?LOG_INFO("Starting debugger", []),
+  debugger:start(FileName),
+  start().
+  
+start() ->
 	?LOG_INFO("Starting ems", []),
 	application:start(erlang_media_server).
 	
-stop()->
+stop() ->
 	application:stop(erlang_media_server).
