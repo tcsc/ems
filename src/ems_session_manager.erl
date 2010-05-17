@@ -63,7 +63,8 @@ receive_rtsp_request(Sequence, Request, Headers, Body) ->
 %% ----------------------------------------------------------------------------
 init(_Args) ->
   ?LOG_DEBUG("ems_session_manager:init/1",[]),
-  
+  process_flag(trap_exit, true),
+    
   % seed the random number generator for this process
   {A1,A2,A3} = now(),
   random:seed(A1,A2,A3),
@@ -100,6 +101,20 @@ handle_cast(_Request, State) ->
 %% @doc Handles a message not sent by the call or cast methods
 %% @end
 %% ----------------------------------------------------------------------------
+handle_info({'EXIT', ChildPid, Reason}, State) ->
+  ?LOG_DEBUG("ems_session_manager:handle_info/2 - Pid ~p has quit", [ChildPid]),
+  
+  case ets:match(ems_session_list, {'_', '$1', ChildPid}) of
+    [[SessionId]] -> 
+      ?LOG_DEBUG("ems_session_manager:handle_info/2 - Pid ~p was session ~p", 
+        [ChildPid, SessionId]),
+      ets:delete(ems_session_list, SessionId);
+      
+    [] -> 
+      ok
+  end,
+  {noreply, State};
+  
 handle_info(_Info, State) ->
   ?LOG_DEBUG("ems_session_manager:handle_info/2 - ~w", [_Info]),
   {noreply, State}.
@@ -180,7 +195,7 @@ create_session(Path, Owner) ->
       Id = random:uniform(99999999),
       {ok, Pid} = ems_session:start_link(Id, Path, Owner),
 
-      ?LOG_DEBUG("ems_session_manager: New session for ~s: id ~w on process ~w",
+      ?LOG_DEBUG("ems_session_manager: New session for ~p: id ~p on process ~p",
         [Path, Id, Pid]),
       ets:insert(ems_session_list, #session_info{path = Path, id = Id, pid = Pid} ),
       

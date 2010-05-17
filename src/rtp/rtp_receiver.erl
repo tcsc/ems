@@ -320,16 +320,18 @@ expand_seq(_Packet = #rtp_packet{sequence = PacketSequence},
         Delta == 0 ->
           duplicate;
       
+        % hopefully normal case - the sequence number has progressed
         Delta >= 1 ->
           ExpandedSeq = (WrapCount bsl 16) + PacketSequence,
           {ExpandedSeq, PacketSequence, WrapCount};
       
-        % small(ish) jump backwards - probably just a missing packet or two
+        % a small(ish) jump backwards - probably just a slightly late 
+        % packet or two
         -Delta =< 16#7FFF ->
           ExpandedSeq = (WrapCount bsl 16) + PacketSequence,
           {ExpandedSeq, MaxSeq, WrapCount};
   
-        % massive jump backwards - probably a wrap
+        % a massive jump backwards - probably a wrap
         true ->
           NewWrapCount = WrapCount + 1,
           ExpandedSeq = (NewWrapCount bsl 16) + PacketSequence,

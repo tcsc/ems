@@ -1,5 +1,4 @@
 -module(ems_session).
--behaviour(gen_server).
 -include("erlang_media_server.hrl").
 -include ("sdp.hrl").
 -include("rtsp.hrl").
@@ -10,21 +9,12 @@
 -record(state, {id, path, owner, description, channels, clients = dict:new()}).
 -record(client, {id, subscriptions = []}).
 -record(subscription, {pid, path}).
-
-%% ============================================================================
-%% gen_server callbacks
-%% ============================================================================
--export([init/1, 
-    handle_call/3, 
-    handle_cast/2, 
-    handle_info/2, 
-    terminate/2, 
-    code_change/3
-	]).
 	
 -export([
   start_link/3,
   receive_rtsp_request/5]).
+  
+-export([start_session/1]).
 
 %% ============================================================================
 %% Exports
@@ -32,27 +22,51 @@
 
 %% ----------------------------------------------------------------------------
 %% @doc Starts a new session and returns the new session's process identifier.
-%% @spec start_link(Id, Path, Desc) -> Pid
-%%       Id = integer()
-%%       Path = string()
-%%       OwnerPid = pid()
 %% @end
 %% ----------------------------------------------------------------------------
+-spec start_link(Id::integer(), Path::string(), OwnerPid::pid()) -> pid().
 start_link(Id, Path, OwnerPid) ->
   ?LOG_DEBUG("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
-  gen_server:start_link(?MODULE, {Id, Path, OwnerPid}, []).
-
+  State = #state{id = Id, path = Path, owner = OwnerPid},
+  {ok, erlang:spawn_link(?MODULE, start_session, [State])}
+  .
+  
 %% ----------------------------------------------------------------------------
-%%
+%% @spec The public interface for passing a request on to the session
 %% ----------------------------------------------------------------------------  
 receive_rtsp_request(SessionPid, Request, Headers, Body, ConnectionPid) ->
-  gen_server:cast(SessionPid, {rtsp_request, Request, Headers, Body, ConnectionPid}).
+  SessionPid ! {self(), {rtsp_request, Request, Headers, Body, ConnectionPid}}.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------    
 stop(SessionPid) ->
-  gen_server:cast(SessionPid, {stop_session, self()}).
+  SessionPid ! {self(), stop_ems_session}.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+start_session(State) ->
+  ?LOG_DEBUG("ems_session:start_session/1 - starting session...", []),
+  process_flag(trap_exit, true),
+  session_loop(State).
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------  
+session_loop(State) ->
+  receive
+    {From, {rtsp_request, Request, Headers, Body, ConnectionPid}} ->
+      NewState = handle_rtsp_request(Request, Headers, Body, ConnectionPid, State),
+      session_loop(NewState);
+      
+    {From, stop_ems_session} ->
+      ok;
+      
+    Message ->
+      ?LOG_DEBUG("ems_session:session_loop/1 - unexpected message ~p", [Message]),
+      session_loop(State)
+  end.
   
 %% ============================================================================
 %% Server Callbacks
@@ -63,25 +77,11 @@ init({Id, Path, OwnerPid}) ->
   process_flag(trap_exit, true),
   State = #state{id=Id, path=Path, owner=OwnerPid},
   {ok, State}.
-  
-%% ----------------------------------------------------------------------------
-%% @doc Handles a synchronous request from another process.
-%% @spec handle_call(Request, From, State) -> Result
-%%       Request =
-%%       From = pid()
-%%       State = 
-%%       Result = {reply, Reply, NewState}
-%% @end 
-%% ----------------------------------------------------------------------------
-
-%% The default implementation. Swallows the message.
-handle_call(_Request, _From, State) ->
-  {noreply, State}.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-handle_cast({rtsp_request, Request, Headers, Body, Connection}, State) ->
+handle_rtsp_request(Request, Headers, Body, Connection, State) ->
   ?LOG_DEBUG("ems_session:handle_cast/2 - Handling RTSP request", []),
 
   Method = Request#rtsp_request.method,
@@ -89,38 +89,12 @@ handle_cast({rtsp_request, Request, Headers, Body, Connection}, State) ->
   try
     NewState = handle_request(Method, Sequence, Request, Headers, Body, 
       Connection, State),
-    {noreply, NewState}
+    NewState
   catch
     ems_session:Error -> 
       rtsp_connection:send_server_error(Connection, Error, Sequence),
-      {noreply, State}
-  end;
- 
-handle_cast({stop_session, _From}, State) ->
-  {stop, graceful_shutdown, State};
-  
-handle_cast(_Request, State) ->
-  {noreply, State}.
-  
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------  
-handle_info(_Info, State) ->
-  {noreply, State}.
-
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------  
-terminate(_Reason, State) ->
-  ?LOG_DEBUG("ems_session:terminate/2 - ~p", [_Reason]),
-  destroy_channels(State),
-  ok.
-
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------    
-code_change(_OldVersion, State, _Extra) ->
-  {ok, State}.
+      State
+  end.
   
 %% ============================================================================
 %% Internal functions
@@ -147,8 +121,14 @@ handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
       rtsp_connection:send_response(Connection, Sequence, ok, [], <<>>),
       NewState
   end;
+  
+handle_request(describe, Sequence, Request, Headers, _Body, Connection, State) ->
+  ?LOG_DEBUG("ems_session:handle_request/7 - DESCRIBE", []),
+  ResponseBody = sdp:format( State#state.description ),
+  rtsp_connection:send_response(Connection, Sequence, ok, [], ResponseBody),  
+  State;
 
-handle_request(setup, Sequence, Request, Headers, <<>>, Connection, State) ->
+handle_request(setup, Sequence, Request, Headers, _Body, Connection, State) ->
   ?LOG_DEBUG("ems_session:handle_request/7 - SETUP", []),
   
   Uri = Request#rtsp_request.uri,

@@ -1,6 +1,6 @@
 -module (sdp).
 
--export([parse/1]).
+-export([parse/1, format/1]).
 -include("sdp.hrl").
 
 % =============================================================================
@@ -28,6 +28,10 @@ parse(Text) ->
     rtp_map = RtpMap, 
     format_map = FormatMap}.
       
+-spec format( Description :: session_description() ) -> binary().
+format(Description) ->
+  <<>>.
+  
 % =============================================================================
 % Internal Fuctions
 % =============================================================================  
