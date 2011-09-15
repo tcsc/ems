@@ -1,7 +1,7 @@
 -module (rtp_receiver).
 -export ([start_link/3, receiver_entrypoint/4, enable/1]).
 
--include_lib("kernel/include/inet.hrl").
+%%-include_lib("kernel/include/inet.hrl").
 -include ("erlang_media_server.hrl").
 -include ("rtp.hrl").
 
@@ -23,7 +23,7 @@
                 rtcp_timer       :: 'undefined' | reference(),
                 last_sr_ts       :: 'undefined' | ntp_timestamp(),
                 last_sr_arrival  :: 'undefined' | wall_clock_time(),
-                client_addr      :: ip_address(),
+                client_addr      :: inet:ip_address(),
                 client_rtp_port  :: non_neg_integer(),
                 client_rtcp_port :: non_neg_integer(),
                 clock_rate       :: non_neg_integer(),
@@ -197,7 +197,7 @@ timestamp_to_ntp({MSec, Sec, USec}) ->
 %% ---------------------------------------------------------------------------- 
 %%
 %% ----------------------------------------------------------------------------
--spec handle_rtp_packet(state(), ip_address(), integer(), binary()) -> state().
+-spec handle_rtp_packet(state(), inet:ip_address(), integer(), binary()) -> state().
 handle_rtp_packet(State, Host, Port, Data) ->
   ArrivalTime = get_time(),
   

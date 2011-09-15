@@ -40,7 +40,6 @@ new_connection(Arg1,Arg2) ->
 %% ----------------------------------------------------------------------------
 init(_Args) -> 
 	?LOG_DEBUG("rtsp_supervisor:init/1 - building child spec list", []),
-	
 	RestartStrategy        = one_for_one,
 	MaxRestarts            = 1000,
 	MaxTimeBetweenRestarts = 3600,

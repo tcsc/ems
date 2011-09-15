@@ -66,10 +66,12 @@ init(_Args) ->
   process_flag(trap_exit, true),
     
   % seed the random number generator for this process
+  ?LOG_DEBUG("ems_session_manager:init/1 - Seeding RNG",[]),
   {A1,A2,A3} = now(),
   random:seed(A1,A2,A3),
   
   % create the ETS table for mapping sessions to processes
+  ?LOG_DEBUG("ems_session_manager:init/1 - Creating ETS tables",[]),
   ets:new(ems_session_list, [set,protected,named_table,{keypos,2}]),
   {ok, []}.
   
