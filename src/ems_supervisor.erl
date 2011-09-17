@@ -27,7 +27,7 @@
 %% @end
 %% ----------------------------------------------------------------------------
 start_link() ->
-	?LOG_INFO("ems_supervisor:start_link/1 Starting Supervisor", []),
+	?LOG_INFO("ems_supervisor:start_link/1 - Starting EMS Supervisor", []),
 	case supervisor:start_link({local, ?SERVER}, ?MODULE, []) of
 		{ok, Pid} ->
 			?LOG_DEBUG("ems_supervisor:start_link/1 - Supervisor started on ~w", [Pid]),
