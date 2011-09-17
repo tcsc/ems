@@ -9,7 +9,7 @@ EBIN=./ebin
 ERLIB=/opt/local/lib/erlang
 ERLC=erlc
 ERL=erl
-ERL_FLAGS=-pz $(ERLIB)/erlang_js/ebin -pa ebin -boot start_sasl
+ERL_FLAGS=-pa ebin
 ERL_COMPILE_FLAGS += +debug_info
 APP_TARGET=$(EBIN)/$(APP_NAME).app
 APP_SRC=$(ESRC)/$(APP_NAME).app
@@ -20,14 +20,14 @@ MODS=$(patsubst $(EBIN)/%.beam, %, $(BEAMS));
 all: $(APP_TARGET)
 	$(ERL) -make $(ERL_COMPILE_FLAGS)
 
+inter: all
+	erl $(ERL_FLAGS) 
+
 run: all
-	erl $(ERL_FLAGS) -run ems 
+	erl $(ERL_FLAGS) -run ems -noshell
 
 debug: all
 	erl $(ERL_FLAGS) -run ems
-	# -run debugger
-	# 
-	# -noshell
 
 dialyzer: default
 	dialyzer -c $(EBIN)

@@ -8,9 +8,6 @@
 %% ============================================================================
 
 start() ->
-	?LOG_INFO("Starting EMS prerequisites..", []),
-	application:start(erlang_js),
-	
 	?LOG_INFO("Starting EMS application", []),	
 	application:start(ems).
 	
@@ -21,6 +18,9 @@ start() ->
 %% ----------------------------------------------------------------------------
 start(normal, _) ->
 	?LOG_DEBUG("ems:start/2", []),	
+
+	?LOG_DEBUG("ems:start/2 - Loading configuration", []),	
+	{ok, Config} = ems_config:load("local_config.erl"),
 
 	case ems_supervisor:start_link() of
 		{ok, Pid} ->

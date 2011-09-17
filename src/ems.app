@@ -6,7 +6,8 @@
   % The version of the applicaton. This is automatically populated by OTP Base
   {vsn, 0.1},
 
-  {modules, [ems, 
+  {modules, [config,
+			 ems, 
              ems_channel,
 			 ems_listener,
 			 ems_logger,
@@ -29,7 +30,7 @@
 
   % This is a list of the applications that your application depends on. This list must be 
   % filled out carefully so that dependency resolution systems can function properly.
-  {applications, [kernel, stdlib, sasl, erlang_js]},
+  {applications, [kernel, stdlib]},
 
   % A list of the registered processes in your application.  Used to prevent collisions. 
   {registered, [ems_listeners]},
