@@ -11,7 +11,7 @@
 load(Path) ->
 	?LOG_DEBUG("config:load/1 - Compiling local configuration: ~s", [Path]),
 	try
-		{Module, ObjectCode} = case compile:file(Path, [binary, return_errors]) of
+		{Module, ObjectCode} = case compile:file(Path, [binary, native, return_errors]) of
 								 {ok, M, Obj} -> {M, Obj};
 								 {error, Es, Ws} -> throw({compile_error, Es, Ws})
 							   end,
@@ -22,7 +22,7 @@ load(Path) ->
 			{error, Le} -> throw ({load_error, Le})
 		end,
 		
-		?LOG_DEBUG("config:load/1 - Verifying local configuration...", []),
+		?LOG_DEBUG("config:load/1 - Verifying local configuration", []),
 		Exports = Module:module_info(exports),
 		lists:foreach( fun(F) -> case lists:member(F, Exports) of 
 				                   false -> throw ({validation_error, F}); 
