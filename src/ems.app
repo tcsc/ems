@@ -22,7 +22,6 @@
 			 rtsp,
 			 rtsp_connection,
 			 rtsp_server,
-			 rtsp_supervisor,
 			 sdp,
 			 stringutils,
 			 url,

@@ -16,7 +16,7 @@ load(Path) ->
 								 {error, Es, Ws} -> throw({compile_error, Es, Ws})
 							   end,
 
-		?LOG_DEBUG("config:load/1 - Loading local configuration: ~w", [Module]),					
+		?LOG_DEBUG("config:load/1 - Loading local configuration module: ~w", [Module]),					
 		case code:load_binary(Module, Path, ObjectCode) of
 			{module, Module} -> ok;
 			{error, Le} -> throw ({load_error, Le})
