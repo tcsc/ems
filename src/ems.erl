@@ -22,7 +22,8 @@ start(normal, _) ->
 	?LOG_DEBUG("ems:start/2 - Loading configuration", []),	
 	{ok, Config} = ems_config:load("local_config.erl"),
 
-	case ems_supervisor:start_link() of
+	?LOG_DEBUG("ems:start/2 - Starting overall supervisor", []),		
+	case ems_supervisor:start_link(Config) of
 		{ok, Pid} ->
 			?LOG_DEBUG("ems_supervisor started", []), 
 			{ok, Pid};

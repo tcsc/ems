@@ -7,7 +7,7 @@
 %% ============================================================================
 %% exports
 %% ============================================================================
--export([start_link/1, get_client_address/1]).
+-export([new/1, take_socket/2, get_client_address/1]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -39,29 +39,37 @@
 %% @doc The state record for an RTSP connection.
 %% @end
 %% ----------------------------------------------------------------------------
+-type conn() :: pid().
+-type_export([conn/0]).
 
--record(state, {
-  server_pid,
-  socket,
-  sender,
-  pending_message,
-  pending_requests,
-  pending_data
-  }).
+-record(state, { server :: rtsp_server:rtsp_server(),
+                 socket :: inet:socket(),
+  				 sender,
+                 pending_message,
+                 pending_requests,
+                 pending_data
+               }).
 
 -define(SP,16#20).
 
 %% ----------------------------------------------------------------------------
-%% @spec start_link(State) -> {ok,Pid} | ignore | {error,Reason}
-%%       Reason = {already_started,Pid} | term()
+%% 
 %% ----------------------------------------------------------------------------
-start_link(ServerPid) -> 
-  ?LOG_DEBUG("rtsp_connection:start_link/1", []),
-  State = #state{
-    server_pid = ServerPid, 
-    pending_data = << >>,
-    pending_requests = dict:new()},
+-spec new(rtsp_server:rtsp_server()) -> {'ok', conn()} | {'error', any()}.
+new(Server) -> 
+  ?LOG_DEBUG("rtsp_connection:new/1", []),
+  State = #state{ server = Server,
+                  pending_data = << >>,
+                  pending_requests = dict:new()},
   gen_fsm:start_link(?MODULE, State, []).
+
+take_socket(Conn, Socket) ->
+	?LOG_DEBUG("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", [Conn]),
+	ok = gen_tcp:controlling_process(Socket, Conn),
+	
+	?LOG_DEBUG("rtsp_connection:take_socket/2- forwarding socket to connection", []),
+	gen_fsm:send_event(Conn, {socket, Socket}),
+	ok.
 
 %% ---------------------------------------------------------------------------- 
 %%

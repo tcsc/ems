@@ -7,24 +7,39 @@
 %% ============================================================================
 %% External Exports
 %% ============================================================================
--export([start_link/0, init/1, add/3]).
+-export([start_link/0, init/1, add/4]).
 
 %% ============================================================================
 %% Internal Exports
 %% ============================================================================
--export([init_listener/1, run_listener/1, accept/1]).
+-export([well_known/0, init_listener/1, run_listener/1, accept/1]).
 
 %% ============================================================================
 %% Records, Macros, etc.
 %% ============================================================================
--record(listener_state, {name, ip, port, pid, socket, callback_module}).
+-type mgr() :: pid().
+-type listener() :: pid().
+-type accept_callback() :: fun((inet:socket(), inet:ip_address()) -> any()).
+-export_type([mgr/0, listener/0, accept_callback/0]).
+
+-record(listener_state, { name     :: string(), 
+                          ip       :: inet:ip_address(), 
+												  port     :: integer(),	
+												  pid      :: pid(), 
+												  socket   :: inet:socket(), 
+												  callback :: accept_callback() }).
+-type listener_state() :: #listener_state{}.
+
+-compile(inline).
+well_known() -> ems_listeners.
 
 %% ----------------------------------------------------------------------------
-%% @spec start_link() -> {ok,Pid} | ignore | {error,Error}
+%% 
 %% ----------------------------------------------------------------------------
+-spec start_link() -> {'ok', mgr()} | {'ignore'} | {'error', any()}.
 start_link() ->
 	?LOG_DEBUG("ems_listener:start_link/0 - Starting Listener Supervisor", []),
-	case supervisor:start_link({local, ems_listeners}, ?MODULE, []) of
+	case supervisor:start_link({local, well_known()}, ?MODULE, []) of
 		{ok, Pid} -> 
 			?LOG_DEBUG("ems_listener:start_link/0 - Listener Supervisor started on ~w", [Pid]),
 			{ok, Pid}
@@ -39,7 +54,7 @@ start_link() ->
 %% @end  
 %% ----------------------------------------------------------------------------
 init(_Args) ->
-	?LOG_DEBUG("ems_listener:init/1 ~w", [_Args]),
+	?LOG_DEBUG("ems_listener:init/1 - ~w", [_Args]),
 	{ok, {{one_for_one, 10, 1}, []}}.
 	
 %% ----------------------------------------------------------------------------	
@@ -50,12 +65,13 @@ init(_Args) ->
 %%       Function = fun(Socket,Args) -> {ok} | {error, Reason}
 %%       Args = [term()]
 %% @end
-%% ----------------------------------------------------------------------------	
-add(LocalAddress, Port, CallbackModule) -> 
+%% ----------------------------------------------------------------------------
+-spec add(mgr(), inet:ip_address(), integer(), accept_callback()) -> {'ok', pid()} | {'error', any()}.
+add(Supervisor, LocalAddress, Port, Callback) -> 
 	?LOG_DEBUG("ems_listener:add_listener/2 - starting listener for ~w:~w", [LocalAddress, Port]),
 	Text = io_lib:format("ems_listener_~w:~w", [LocalAddress,Port]),
 	Name = Name = list_to_atom(lists:flatten(Text)),
-	State = #listener_state{name=Name, ip=LocalAddress, port=Port, callback_module=CallbackModule},
+	State = #listener_state{name=Name, ip=LocalAddress, port=Port, callback=Callback},
 	ChildSpec = {
 		Name,
 		{?MODULE, init_listener, [State]},
@@ -63,7 +79,7 @@ add(LocalAddress, Port, CallbackModule) ->
 		brutal_kill,
 		worker,
 		[?MODULE]},
-	supervisor:start_child(ems_listeners, ChildSpec).
+	supervisor:start_child(Supervisor, ChildSpec).
 
 %% ----------------------------------------------------------------------------		
 %% @spec init_listener(State) -> {ok,Pid} | {error, Reason}.
@@ -83,9 +99,8 @@ init_listener(State) ->
 %% ----------------------------------------------------------------------------	
 %% @doc Entry point for the TCP listener process. Creates listener socket and 
 %%      then starts the acceptor loop.
-%% @spec run_listener(State) -> 
 %% @end
-%% ----------------------------------------------------------------------------	
+%% ----------------------------------------------------------------------------
 run_listener(State = #listener_state{ip=Address, port=Port}) ->
 	?LOG_DEBUG("ems_listener:run_listener/1 - entering new listener process", []),
 	
@@ -112,25 +127,20 @@ run_listener(State = #listener_state{ip=Address, port=Port}) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Implements the accept loop for the listener process.
-%% @spec Accept(State) -> State.
 %% @end
 %% ----------------------------------------------------------------------------
-accept(State = #listener_state{socket=Socket, callback_module=CallbackModule}) ->
+-spec accept(listener_state()) -> any().
+accept(State = #listener_state{socket=Socket, callback=Callback}) ->
 	%?LOG_DEBUG("ems_listener:accept/1 - accept", []),
 
 	case gen_tcp:accept(Socket) of
-		{ok, Connection} ->
-			{ok, PeerAddress} = inet:peername(Connection),
+		{ok, NewConnection} ->
+			{ok, PeerAddress} = inet:peername(NewConnection),
 			?LOG_DEBUG("ems_listener:accept/1 - new connection from ~w", [PeerAddress]),			
-			new_connection(Connection, CallbackModule),
+			Callback(NewConnection, PeerAddress),
 			accept(State);
 			
 		{error, Reason} ->
-			?LOG_ERROR("ems_listener:accept/1 - accept on ~w ailed ~w)", [Socket, Reason]),
+			?LOG_ERROR("ems_listener:accept/1 - accept on ~w failed ~w)", [Socket, Reason]),
 			accept(State)
 	end.
-	
-new_connection(Socket, CallbackModule) ->
-	?LOG_DEBUG("ems_listener:new_connection/2: Callback is ~w", [CallbackModule]),
-	CallbackModule:new_connection(Socket).
-	

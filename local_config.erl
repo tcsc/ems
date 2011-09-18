@@ -6,7 +6,8 @@
 init() -> 
 	{ok, cookie}.
 
-get_config(_Cookie) -> 
-	{[{rtsp, [{ports, [4321,4320,4319]}]}]}.
+get_config(_) -> [
+	{rtsp, [ {ports, [4321,4320,4319]} ]}
+	].
 
 %%barf() -> ok.

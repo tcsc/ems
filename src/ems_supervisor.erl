@@ -5,7 +5,7 @@
 %% ============================================================================
 %% External Exports
 %% ============================================================================
--export([start_link/0]).
+-export([start_link/1]).
 
 %% ============================================================================
 %% Internal Exports
@@ -26,9 +26,9 @@
 %% @spec start_link() -> {ok, Pid} | Error
 %% @end
 %% ----------------------------------------------------------------------------
-start_link() ->
+start_link(Config) ->
 	?LOG_INFO("ems_supervisor:start_link/1 - Starting EMS Supervisor", []),
-	case supervisor:start_link({local, ?SERVER}, ?MODULE, []) of
+	case supervisor:start_link({local, ?SERVER}, ?MODULE, Config) of
 		{ok, Pid} ->
 			?LOG_DEBUG("ems_supervisor:start_link/1 - Supervisor started on ~w", [Pid]),
 			{ok, Pid};
@@ -45,7 +45,7 @@ start_link() ->
 %% ----------------------------------------------------------------------------
 %% @spec init([]) -> {ok, {SupervisorFlags, ChildSpec}}
 %% ----------------------------------------------------------------------------
-init(_Args) ->
+init({Cookie, ConfigModule}) ->
 	?LOG_INFO("ems_supervisor:init/1 - building child spec list", []),
 	
 	RestartStrategy        = one_for_one,
@@ -53,9 +53,25 @@ init(_Args) ->
 	MaxTimeBetweenRestarts = 3600,
 	
 	SupervisorFlags = {RestartStrategy, MaxRestarts, MaxTimeBetweenRestarts},
+	Config = ConfigModule:get_config(Cookie),
+	RtspConfig = lists:keyfind(rtsp, 1, Config),
 	
 	ChildSpec = 
-	[
+	[	
+		{listener_sup,
+			{ems_listener, start_link, []},
+			permanent,
+			2000,
+			supervisor,
+			[ems_listener]
+		},
+		{rtsp_server,
+			{rtsp_server, start_link, [ems_listener:well_known(), RtspConfig] },
+			permanent,
+			2000,
+			worker,
+			[rtsp_server]
+		},
 		{ems_server,
 			{ems_server, start_link, []},
 			permanent,
@@ -69,20 +85,6 @@ init(_Args) ->
 		  2000,
 		  worker,
 		  [ems_session_manager]
-		},
-		{listener_sup,
-			{ems_listener, start_link, []},
-			permanent,
-			2000,
-			supervisor,
-			[ems_listener]
-		},
-		{rtsp_sup,
-			{rtsp_supervisor, start_link, []},
-			permanent,
-			2000,
-			supervisor,
-			[rtsp_supervisor]
 		}
 	],
 	

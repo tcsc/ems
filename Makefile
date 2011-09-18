@@ -9,8 +9,8 @@ EBIN=./ebin
 ERLIB=/opt/local/lib/erlang
 ERLC=erlc
 ERL=erl
-ERL_FLAGS=-pa ebin
-ERL_COMPILE_FLAGS += +debug_info
+ERL_FLAGS=-pa ebin -smp enable -boot start_sasl
+ERL_COMPILE_FLAGS += +debug_info +native -smp
 APP_TARGET=$(EBIN)/$(APP_NAME).app
 APP_SRC=$(ESRC)/$(APP_NAME).app
 
@@ -27,7 +27,7 @@ run: all
 	erl $(ERL_FLAGS) -run ems -noshell
 
 debug: all
-	erl $(ERL_FLAGS) -run ems
+	erl $(ERL_FLAGS) -run appmon -run ems
 
 dialyzer: default
 	dialyzer -c $(EBIN)
