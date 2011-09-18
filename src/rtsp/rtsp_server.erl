@@ -7,9 +7,6 @@
 %% ============================================================================
 %% Type definitions
 %% ============================================================================
--type rtsp_svr() :: pid().
--export_type([rtsp_svr/0]).
-
 -record(state, { server_string :: string(),
                  listener_mgr  :: ems_listener:listener_sup(),
                  listeners     :: ems_listener:listener()
@@ -31,7 +28,7 @@
 %% ============================================================================
 %% Exported Functions
 %% ============================================================================
--export([start_link/2, add_listener/3]).
+-export([start_link/2, add_listener/2]).
 
 -compile(inline).
 well_known() -> rtsp_server. 
@@ -40,7 +37,7 @@ well_known() -> rtsp_server.
 %% @doc Starts the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec start_link(ems_listener:mgr(), any()) -> {ok, rtsp_svr()} | {error, any()}.
+-spec start_link(ems_listener:mgr(), any()) -> {ok, pid()} | {error, any()}.
 start_link(Lm, {rtsp, Config}) ->
 	?LOG_DEBUG("rtsp_server:start_link/1 - Config: {~w, {rtsp, ~w}}", [Lm, Config]),
 
@@ -49,19 +46,19 @@ start_link(Lm, {rtsp, Config}) ->
 	                listeners     = [] },
 	
 	case gen_server:start_link({local,well_known()}, ?MODULE, State, []) of
-		{ok, Pid} -> create_listeners(Pid, Lm, Config),
+		{ok, Pid} -> create_listeners(Config),
 								 {ok, Pid};
 		Err -> Err
 	end.
 		
-create_listeners(RtspSvr, Lm, Config) ->
+create_listeners(Config) ->
 	Ports = case lists:keyfind(ports, 1, Config) of
 						{ports, Ps} -> Ps;
 						false -> [554]
 					end,
 
 	Bind = fun(P) -> 
-		{ok, _Pid} = add_listener(RtspSvr, {0,0,0,0}, P)
+		{ok, _Pid} = add_listener({0,0,0,0}, P)
 	end,
 	
 	lists:foreach(Bind, Ports).
@@ -71,10 +68,10 @@ create_listeners(RtspSvr, Lm, Config) ->
 %% @doc Adds a local network binding to the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec add_listener(rtsp_svr(), inet:ip_addr(), integer()) -> {ok, ems_listener:listener() }| {error, any()}.
-add_listener(Svr, Address, Port) ->
-	?LOG_DEBUG("rtsp_server:add_listener/3 - ~w:~w", [Address, Port]),
-	gen_server:call(Svr, {bind, Address, Port}).
+-spec add_listener(inet:ip_addr(), integer()) -> {ok, ems_listener:listener() }| {error, any()}.
+add_listener(Address, Port) ->
+	?LOG_DEBUG(":add_listener/2 - ~w:~w", [Address, Port]),
+	gen_server:call(rtsp_server, {bind, Address, Port}).
 
 %% ============================================================================
 %% Callbacks
@@ -104,6 +101,7 @@ new_connection(Svr, Socket, _Addr) ->
 %% ----------------------------------------------------------------------------
 init(State) ->
 	?LOG_DEBUG("rtsp_server:init/1",[]),
+	process_flag(trap_exit, true),
 	{ok, State}.
 	
 %% ----------------------------------------------------------------------------
@@ -121,7 +119,7 @@ handle_call({bind, Address, Port}, _From, State = #state{ listener_mgr = Lm }) -
 	Me = self(),
 	Callback = fun(Socket, RemoteAddr) -> new_connection(Me, Socket, RemoteAddr) end,
 	case ems_listener:add(Lm, Address, Port, Callback) of
-		{ok, L} -> Ls = [ L | State#state.listeners ],
+		{ok, L} -> Ls = [ {L, Address, Port} | State#state.listeners ],
 		           StateP = State#state{listeners = Ls},
 				       {reply, {ok, L}, StateP};
 				
@@ -156,7 +154,7 @@ handle_cast(_Request, State) ->
 %% ----------------------------------------------------------------------------	
 
 handle_info(_Info, State) ->
-	?LOG_DEBUG("rtsp_server:handle_info/2",[]),
+	?LOG_DEBUG("rtsp_server:handle_info/2 - ~w",[_Info]),
 	{noreply, State}.
 
 terminate(Reason, _State) ->
@@ -166,7 +164,7 @@ terminate(Reason, _State) ->
 code_change(_OldVersion, State, _Extra) ->
 	?LOG_DEBUG("rtsp_server:code_change/3",[]),
 	{ok, State}.
-  
+
 %% ----------------------------------------------------------------------------
 %% @doc Generates a dictionary of the default set of headers for any given 
 %%      response.
