@@ -1,6 +1,6 @@
 -module(ems).
 -export([start/0, start/2, stop/0, stop/1, shutdown/0]).
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 -behaviour(application).
 
 %% ============================================================================
@@ -9,6 +9,7 @@
 
 start() ->
 	?LOG_INFO("Starting EMS application", []),	
+	application:start(listener),
 	application:start(ems).
 	
 %% ----------------------------------------------------------------------------

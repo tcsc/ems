@@ -1,6 +1,6 @@
 -module(ems_supervisor).
 -behaviour(supervisor).
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 
 %% ============================================================================
 %% External Exports
@@ -58,13 +58,6 @@ init(ConfigHandle) ->
 	
 	ChildSpec = 
 	[	
-		{listener_sup,
-			{ems_listener, start_link, []},
-			permanent,
-			2000,
-			supervisor,
-			[ems_listener]
-		},
 		{digest_auth_server,
 			{rtsp_auth, start_link, []},
 			permanent,
@@ -72,7 +65,7 @@ init(ConfigHandle) ->
 			worker,
 			[digest_auth_server]},
 		{rtsp_server,
-			{rtsp_server, start_link, [ConfigHandle, ems_listener:well_known(), RtspConfig] },
+			{rtsp_server, start_link, [ConfigHandle, RtspConfig] },
 			permanent,
 			2000,
 			worker,

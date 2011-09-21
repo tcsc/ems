@@ -1,5 +1,5 @@
 -module (ems_config).
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 -include("config.hrl").
 
 %% Client-facing exports

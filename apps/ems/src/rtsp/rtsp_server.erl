@@ -1,7 +1,7 @@
 -module(rtsp_server).
 -behaviour(gen_server).
 
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 -include("rtsp.hrl").
 
 %% ============================================================================
@@ -11,9 +11,8 @@
 -type_export([svr/0]).
 
 -record(state, { server_string :: string(),
-                 listener_mgr  :: ems_listener:listener_sup(),
-                 listeners     :: [ems_listener:listener()],
 								 config_handle :: ems_config:handle(),
+								 listeners     :: listener:listener(),
 								 auth_svr      :: rtsp_auth:svr(),
 								 connections   :: [rtsp_connection:conn()]
 							 }).
@@ -31,9 +30,9 @@
 	code_change/3 ]).
 
 %% ============================================================================
-%% Exported Functions
+%% Public API
 %% ============================================================================
--export([start_link/3, add_listener/2]).
+-export([start_link/2, add_listener/2]).
 
 -compile(inline).
 well_known() -> rtsp_server. 
@@ -42,12 +41,11 @@ well_known() -> rtsp_server.
 %% @doc Starts the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec start_link(ems_config:handle(), ems_listener:mgr(), any()) -> {ok, svr()} | {error, any()}.
-start_link(ConfigHandle, Lm, {rtsp, Config}) ->
-	?LOG_DEBUG("rtsp_server:start_link/1 - Config: {~w, {rtsp, ~w}}", [Lm, Config]),
+-spec start_link(ems_config:handle(), any()) -> {ok, svr()} | {error, any()}.
+start_link(ConfigHandle, {rtsp, Config}) ->
+	?LOG_DEBUG("rtsp_server:start_link/1 - Config: {rtsp, ~w}", [Config]),
 
 	State = #state{ server_string = "EMS RTSP Service/0.1",
-	                listener_mgr  = Lm,
 	                listeners     = [],
 									config_handle = ConfigHandle,
 									connections   = []},
@@ -75,7 +73,7 @@ create_listeners(Config) ->
 %% @doc Adds a local network binding to the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec add_listener(inet:ip_addr(), integer()) -> {ok, ems_listener:listener() } | 
+-spec add_listener(inet:ip_addr(), integer()) -> {ok, listener:listener() } | 
                                                  {error, any()}.
 add_listener(Address, Port) ->
 	?LOG_DEBUG(":add_listener/2 - ~w:~w", [Address, Port]),
@@ -128,11 +126,11 @@ handle_call(spawn_connection, _From, State) ->
 		err -> {reply, error, State}
 	end;
 
-handle_call({bind, Address, Port}, _From, State = #state{ listener_mgr = Lm }) ->
+handle_call({bind, Address, Port}, _From, State) ->
 	?LOG_DEBUG("rtsp_server:handle_call/3 - attempting to bind to ~w:~w", [Address, Port]),
 	Me = self(),
 	Callback = fun(Socket, RemoteAddr) -> new_connection(Me, Socket, RemoteAddr) end,
-	case ems_listener:add(Address, Port, Callback) of
+	case listener:add(Address, Port, Callback) of
 		{ok, L} -> Ls = [ {L, Address, Port} | State#state.listeners ],
 		           StateP = State#state{listeners = Ls},
 				       {reply, {ok, L}, StateP};

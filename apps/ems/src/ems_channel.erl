@@ -1,5 +1,5 @@
 -module (ems_channel).
--include ("erlang_media_server.hrl").
+-include ("logging.hrl").
 -include ("sdp.hrl").
 -record (state, {pid, stream, rtpmap, receiver}).
 -behaviour (gen_server).

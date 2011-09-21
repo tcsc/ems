@@ -1,6 +1,6 @@
 -module (rtsp).
 -include("rtsp.hrl").
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 
 %% ============================================================================
 %% Parsing Exports 

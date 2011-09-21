@@ -1,6 +1,6 @@
 -module(ems_server).
 -behaviour(gen_server).
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 
 %% ============================================================================
 %% gen_server callbacks

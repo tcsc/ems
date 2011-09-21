@@ -1,6 +1,6 @@
 -module(ems_session_manager).
 -behaviour(gen_server).
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 
 %% ============================================================================
 %% Definitions

@@ -1,5 +1,5 @@
 -module(ems_session).
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 -include ("sdp.hrl").
 -include("rtsp.hrl").
 

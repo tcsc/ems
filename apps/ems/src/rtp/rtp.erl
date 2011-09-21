@@ -1,6 +1,6 @@
 -module(rtp).
 -include ("rtp.hrl").
--include ("erlang_media_server.hrl").
+-include ("logging.hrl").
 -export ([parse/1, create_socket_pair/1]).
 
 %% ----------------------------------------------------------------------------

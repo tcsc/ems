@@ -1,7 +1,7 @@
 -module(rtsp_connection).
 -behaviour(gen_fsm).
 
--include("erlang_media_server.hrl").
+-include("logging.hrl").
 -include("rtsp.hrl").
 
 %% ============================================================================

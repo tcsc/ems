@@ -2,7 +2,7 @@
 -export ([start_link/3, receiver_entrypoint/4, enable/1]).
 
 %%-include_lib("kernel/include/inet.hrl").
--include ("erlang_media_server.hrl").
+-include ("logging.hrl").
 -include ("rtp.hrl").
 
 -record(stats, {rx_packets          = 0 :: non_neg_integer(),
