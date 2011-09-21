@@ -7,7 +7,7 @@
 %% ============================================================================
 %% exports
 %% ============================================================================
--export([new/1, take_socket/2, get_client_address/1]).
+-export([new/3, take_socket/2, get_client_address/1]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -26,7 +26,6 @@
   waiting_for_socket/2, 
   ready/2, 
   send_response/5, 
-  send_server_error/2, 
   send_server_error/3]).
 
 %% ============================================================================
@@ -42,12 +41,13 @@
 -type conn() :: pid().
 -type_export([conn/0]).
 
--record(state, { server :: rtsp_server:rtsp_server(),
-                 socket :: inet:socket(),
-  				 sender,
+-record(state, { server_str        :: string(),
+                 socket            :: inet:socket(),
+								 sender            :: pid(),
                  pending_message,
                  pending_requests,
-                 pending_data
+                 pending_data      :: binary(),
+								 config_handle     :: ems_config:handle()
                }).
 
 -define(SP,16#20).
@@ -55,12 +55,14 @@
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
--spec new(rtsp_server:rtsp_server()) -> {'ok', conn()} | {'error', any()}.
-new(Server) -> 
+-spec new(rtsp_svr:svr(), string(), ems_config:handle()) -> {'ok', conn()} | {'error', any()}.
+new(_Owner, ServerStr, ConfigHandle) -> 
   ?LOG_DEBUG("rtsp_connection:new/1", []),
-  State = #state{ server = Server,
-                  pending_data = << >>,
-                  pending_requests = dict:new()},
+  State = #state{ server_str       = ServerStr,
+									config_handle    = ConfigHandle,
+                  pending_data     = << >>,
+                  pending_requests = dict:new()
+                },
   gen_fsm:start_link(?MODULE, State, []).
 
 take_socket(Conn, Socket) ->
@@ -74,14 +76,12 @@ take_socket(Conn, Socket) ->
 %% ---------------------------------------------------------------------------- 
 %%
 %% ---------------------------------------------------------------------------- 
+
+get_config_handle(Conn) -> 
+	gen_fsm:sync_send_all_state_event(Conn, get_config_handle).
   
-get_client_address(ClientConnection) ->
-  ClientConnection ! {get_client_address, self()},
-  receive
-    {client_address, ClientAddress} -> ClientAddress
-  after 
-    1000 -> throw(timeout)
-  end.
+get_client_address(Conn) ->
+	gen_fsm:sync_send_all_state_event(Conn, get_client_address).
 
 %% ---------------------------------------------------------------------------- 
 %% 
@@ -97,6 +97,20 @@ init(State) ->
 %%                {next_state,NextStateName,NewStateData,hibernate} | 
 %%                {stop,Reason,NewStateData}
 %% ----------------------------------------------------------------------------
+handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, State) ->
+	?LOG_DEBUG("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
+		[Sequence, Status]),
+
+	StateP = case deregister_pending_request(Sequence, State) of 
+		{Rq, S} -> RtspVersion = Rq#rtsp_request.version,
+	             AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
+	             Response = #rtsp_response{status = Status, version = RtspVersion}, 
+	             Bytes = rtsp:format_message(Response, AllHeaders, Body),
+	             send_data(S, Bytes);
+	    _ -> State
+  end,
+	{next_state, StateName, StateP};
+
 handle_event(_Event, StateName, StateData) -> 
   {next_state, StateName, StateData}.
 
@@ -105,13 +119,6 @@ handle_event(_Event, StateName, StateData) ->
 %% @spec
 %% @end
 %% ----------------------------------------------------------------------------
-handle_info({get_client_address, From}, 
-            StateName, 
-            StateData = #state{socket = Socket}) ->
-  {ok, {Host, _}} = inet:sockname(Socket),
-  From ! {client_address, Host},
-  {next_state, StateName, StateData};
-
 handle_info({tcp, Socket, Data}, 
             State, 
             StateData = #state{pending_data = PendingData}) ->
@@ -136,12 +143,6 @@ handle_info({tcp_closed, _Socket}, _StateName, State) ->
 
 handle_info({sender_waiting, _SendingPid}, StateName, StateData) ->
   {next_state, StateName, StateData};
-  
-handle_info({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, StateData) ->
-  ?LOG_DEBUG("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
-    [Sequence, Status]),
-  NewStateData = handle_send_response(Sequence, Status, ExtraHeaders, Body, StateData),
-  {next_state, StateName, NewStateData}; 
 
 handle_info(Info, StateName, StateData) ->
   ?LOG_DEBUG("rtsp_connection:handle_info/3 ~w, ~w, ~w", [Info, StateName, StateData]),
@@ -150,6 +151,14 @@ handle_info(Info, StateName, StateData) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
+handle_sync_event(get_client_address, _From, StateName, State) ->
+  {ok, {Host, _}} = inet:sockname(State#state.socket),
+  {reply, Host, StateName, State};
+
+handle_sync_event(get_config_handle, _From, StateName, State) ->
+	Config = State#state.config_handle,
+	{reply, Config, StateName, State};
+
 handle_sync_event(_Event, _From, StateName, StateData) -> 
   {next_state, StateName, StateData}.
 
@@ -169,38 +178,12 @@ code_change(_OldVsn, StateName, StateData, _Extra) ->
 %% @doc Sends a send_response message to the supplied process. The process will 
 %%      pick up the response from the receive loop, format it and queue it for
 %%      sending 
-%% @spec send_response(Pid, Sequence, Status, ExtraHeaders, Body) -> ok
-%%         Pid = pid()
-%%         Sequence = int()
-%%         Status = ok | server_error | not_found | ...
-%%         ExtraHeaders = [Header]
-%%         Body = binary()
-%%         Header = {Name, Value}
-%%         Name = term()
-%%         Value = string()
 %% @end
 %% ----------------------------------------------------------------------------
-send_response(Pid, Sequence, Status, ExtraHeaders, Body) ->
-  Pid ! {send_response, Sequence, Status, ExtraHeaders, Body},
-  ok.
-
-%% ----------------------------------------------------------------------------
-%% @doc Formats and sends a response to an RTSP message
-%% @spec handle_send_response(Sequence, Status, ExtraHeaders, Body, State) -> NewState
-%% @end
-%% ----------------------------------------------------------------------------
-handle_send_response(Sequence, Status, ExtraHeaders, Body, State) ->
-  case deregister_pending_request(Sequence, State) of 
-    {Request, NewState} ->
-      RtspVersion = Request#rtsp_request.version,
-      AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
-      Response = #rtsp_response{status = Status, version = RtspVersion}, 
-      FormattedResponse = rtsp:format_message(Response, AllHeaders, Body),
-      send_data(State, FormattedResponse),
-      NewState;
-
-    _ -> State
-  end.
+-spec send_response(conn(), integer(), any(), [any()], binary()) -> any().
+send_response(Conn, Sequence, Status, ExtraHeaders, Body) -> 
+	Event = {send_response, Sequence, Status, ExtraHeaders, Body},
+	gen_fsm:send_all_state_event(Conn, Event).
 
 %% ============================================================================
 %% State callbacks
@@ -324,26 +307,18 @@ dispatch_message(Request,Headers,Body,State) when is_record(Request,rtsp_request
   ?LOG_DEBUG("rtsp_connection:dispatch_message/4 - handling #~w ~s ~s",
     [Sequence,Method,Uri]),
   
-  NewState = register_pending_request(Sequence, Request, State),
-  try
-    handle_request(Method, Sequence, Request, Headers, Body, NewState)
-  catch
-    Error -> 
-      send_server_error(Error, Error, Sequence),
-      State
-  end.  
-
-%% ----------------------------------------------------------------------------
-%% @doc A wrapper for send_server_error/3 that assumes the target connection
-%%      Pid is the current process. 
-%% @spec send_server_error(Reason, Sequence) -> ok
-%%         Reason = atom() | string()
-%%         Sequence = int()
-%% @end
-%% ----------------------------------------------------------------------------
-send_server_error(Reason, Sequence) ->
-  send_server_error(self(), Reason, Sequence).
-
+  StateP = register_pending_request(Sequence, Request, State),
+	Me = self(),
+	Handler = fun() -> 
+		          try 
+								handle_request(Me, Method, Sequence, Request, Headers, Body)
+							catch
+								Err -> send_server_error(Me, Err, Sequence)
+							end
+						end,
+	erlang:spawn(Handler),
+	StateP.
+	
 %% ----------------------------------------------------------------------------
 %% @doc Generates an RTSP response for a failure and forwards it to the
 %%      supplied RTSP connection for transmission back to the client.
@@ -406,7 +381,7 @@ build_response_headers(Sequence, ContentLength, Headers) ->
 %%       Method = options | accounce | setup | play | teardown
 %% @end
 %% ----------------------------------------------------------------------------  
-handle_request(options, Sequence, _Request, _Headers, << >>, State) ->
+handle_request(Conn, options, Sequence, _, _, _) ->
   PublicOptions = [?RTSP_METHOD_ANNOUNCE,
                    ?RTSP_METHOD_DESCRIBE,
                    ?RTSP_METHOD_SETUP,
@@ -414,18 +389,24 @@ handle_request(options, Sequence, _Request, _Headers, << >>, State) ->
                    ?RTSP_METHOD_PAUSE,
                    ?RTSP_METHOD_TEARDOWN,
                    ?RTSP_METHOD_RECORD],
-  send_response(
-    self(), 
-    Sequence, 
-    ok, 
-    [{"Public", string:join(PublicOptions, ", ")}], << >>),
-  State;
+  Headers = [{"Public", string:join(PublicOptions, ", ")}],
+  send_response(Conn, Sequence, ok, Headers, << >>);
 
-%%
-handle_request(_Method, Sequence, Request, Headers, Body, State) ->
-  ems_session_manager:receive_rtsp_request(Sequence, Request, Headers, Body),
-  State.
-  
+handle_request(Conn, describe, Sequence, _Request, _Headers, _Body) -> 
+	_Config = get_config_handle(Conn),
+	send_response(Conn, Sequence, not_implemented, [], << >>);
+
+%handle_request(Conn, describe, Request, Headers, Body) -> 
+%	Uri = Request#rtsp_request.uri,
+%	{_,_,_,Path} = url:parse(Uri),
+%	Config = get_config_handle(Conn),
+%	MountPoint = case ems_config:get_mount_point(Config, Path) of 
+
+handle_request(Conn, _Method, Sequence, _Request, _Headers, _Body) ->
+  send_response(Conn, Sequence, not_implemented, [], << >>).
+
+%%with_authenticated_user_do() ->
+	
 %% ============================================================================
 %% Utilility functions
 %% ============================================================================

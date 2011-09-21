@@ -7,7 +7,7 @@
 %% ============================================================================
 %% External Exports
 %% ============================================================================
--export([start_link/0, init/1, add/4]).
+-export([start_link/0, init/1, add/3, remove/1]).
 
 %% ============================================================================
 %% Internal Exports
@@ -18,7 +18,7 @@
 %% Records, Macros, etc.
 %% ============================================================================
 -type mgr() :: pid().
--type listener() :: pid().
+-type listener() :: {term(), pid()}.
 -type accept_callback() :: fun((inet:socket(), inet:ip_address()) -> any()).
 -export_type([mgr/0, listener/0, accept_callback/0]).
 
@@ -33,6 +33,10 @@
 -compile(inline).
 well_known() -> ems_listeners.
 
+%% ============================================================================
+%% Public API
+%% ============================================================================
+
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
@@ -44,6 +48,45 @@ start_link() ->
 			?LOG_DEBUG("ems_listener:start_link/0 - Listener Supervisor started on ~w", [Pid]),
 			{ok, Pid}
 	end.
+
+%% ----------------------------------------------------------------------------	
+%% @doc Starts an individual TCP listener process
+%% @end
+%% ----------------------------------------------------------------------------
+-spec add(inet:ip_address(), integer(), accept_callback()) -> {'ok', pid()} | {'error', any()}.
+add(LocalAddress, Port, Callback) -> 
+	Supervisor = well_known(),
+	
+	?LOG_DEBUG("ems_listener:add_listener/2 - starting listener for ~w:~w", [LocalAddress, Port]),
+	Text = io_lib:format("ems_listener_~w:~w", [LocalAddress,Port]),
+	Name = Name = list_to_atom(lists:flatten(Text)),
+	State = #listener_state{name=Name, ip=LocalAddress, port=Port, callback=Callback},
+	ChildSpec = {
+		Name,
+		{?MODULE, init_listener, [State]},
+		transient,
+		brutal_kill,
+		worker,
+		[?MODULE]},
+	
+	case supervisor:start_child(Supervisor, ChildSpec) of
+		{ok, Pid} -> 
+			{Id, _, _, _} = lists:keyfind(Pid, 2, supervisor:which_children(Supervisor)),
+			{ok, {Id, Pid}};
+		
+		Err -> Err
+	end.
+	
+-spec remove(listener()) -> ok.
+remove({Id, Pid}) ->
+	Supervisor = well_known(),
+	
+	?LOG_DEBUG("ems_listener:remove/2 - terminating listener ~w", [Id]),
+	supervisor:terminate_child(Supervisor, Id),
+	
+	?LOG_DEBUG("ems_listener:remove/2 - deleting listener child spec", []),
+	supervisor:terminate_child(Supervisor, Id),
+	ok.
 	
 %% ----------------------------------------------------------------------------
 %% @doc Called by the supervisor framework to find out about the child 
@@ -56,30 +99,6 @@ start_link() ->
 init(_Args) ->
 	?LOG_DEBUG("ems_listener:init/1 - ~w", [_Args]),
 	{ok, {{one_for_one, 10, 1}, []}}.
-	
-%% ----------------------------------------------------------------------------	
-%% @doc Starts an individual TCP listener process
-%% @spec start_listener(LocalAddress,Port,CallbackModule) -> {ok, Pid} | {error, Reason}
-%% where Callback = {Module,Function,Args}
-%%       Module = Callback module
-%%       Function = fun(Socket,Args) -> {ok} | {error, Reason}
-%%       Args = [term()]
-%% @end
-%% ----------------------------------------------------------------------------
--spec add(mgr(), inet:ip_address(), integer(), accept_callback()) -> {'ok', pid()} | {'error', any()}.
-add(Supervisor, LocalAddress, Port, Callback) -> 
-	?LOG_DEBUG("ems_listener:add_listener/2 - starting listener for ~w:~w", [LocalAddress, Port]),
-	Text = io_lib:format("ems_listener_~w:~w", [LocalAddress,Port]),
-	Name = Name = list_to_atom(lists:flatten(Text)),
-	State = #listener_state{name=Name, ip=LocalAddress, port=Port, callback=Callback},
-	ChildSpec = {
-		Name,
-		{?MODULE, init_listener, [State]},
-		transient,
-		brutal_kill,
-		worker,
-		[?MODULE]},
-	supervisor:start_child(Supervisor, ChildSpec).
 
 %% ----------------------------------------------------------------------------		
 %% @spec init_listener(State) -> {ok,Pid} | {error, Reason}.

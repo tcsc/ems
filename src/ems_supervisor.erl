@@ -45,7 +45,7 @@ start_link(Config) ->
 %% ----------------------------------------------------------------------------
 %% @spec init([]) -> {ok, {SupervisorFlags, ChildSpec}}
 %% ----------------------------------------------------------------------------
-init({Cookie, ConfigModule}) ->
+init(ConfigHandle) ->
 	?LOG_INFO("ems_supervisor:init/1 - building child spec list", []),
 	
 	RestartStrategy        = one_for_one,
@@ -53,7 +53,7 @@ init({Cookie, ConfigModule}) ->
 	MaxTimeBetweenRestarts = 3600,
 	
 	SupervisorFlags = {RestartStrategy, MaxRestarts, MaxTimeBetweenRestarts},
-	Config = ConfigModule:get_config(Cookie),
+	Config = ems_config:get_config(ConfigHandle),
 	RtspConfig = lists:keyfind(rtsp, 1, Config),
 	
 	ChildSpec = 
@@ -65,8 +65,14 @@ init({Cookie, ConfigModule}) ->
 			supervisor,
 			[ems_listener]
 		},
+		{digest_auth_server,
+			{rtsp_auth, start_link, []},
+			permanent,
+			2000,
+			worker,
+			[digest_auth_server]},
 		{rtsp_server,
-			{rtsp_server, start_link, [ems_listener:well_known(), RtspConfig] },
+			{rtsp_server, start_link, [ConfigHandle, ems_listener:well_known(), RtspConfig] },
 			permanent,
 			2000,
 			worker,

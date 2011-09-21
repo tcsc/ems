@@ -27,7 +27,7 @@ run: all
 	erl $(ERL_FLAGS) -run ems -noshell
 
 debug: all
-	erl $(ERL_FLAGS) -run appmon -run ems
+	erl $(ERL_FLAGS) -boot start_sasl -run appmon -run debugger start -run ems
 
 dialyzer: default
 	dialyzer -c $(EBIN)

@@ -3,18 +3,26 @@
 -include("config.hrl").
 
 %% Client-facing exports
--export([load/1, get_config/1]).
+-export([load/1, get_config/1, get_mount_point/2]).
 
--type config_handle() :: {any(), module()}.
+%% ============================================================================
+%%
+%% ============================================================================
+-type cookie() :: any().
+-type handle() :: {cookie(), module()}. 
 
--spec load(FileName::string()) -> {ok, config_handle()} | {error, any()}.
+%% ============================================================================
+%%
+%% ============================================================================
+-spec load(FileName::string()) -> {ok, handle()} | {error, any()}.
 load(Path) ->
 	?LOG_DEBUG("config:load/1 - Compiling local configuration: ~s", [Path]),
 	try
-		{Module, ObjectCode} = case compile:file(Path, [binary, native, return_errors]) of
-								 {ok, M, Obj} -> {M, Obj};
-								 {error, Es, Ws} -> throw({compile_error, Es, Ws})
-							   end,
+		{Module, ObjectCode} = 
+			case compile:file(Path, [binary, native, return_errors]) of
+				{ok, M, Obj} -> {M, Obj};
+			  {error, Es, Ws} -> throw({compile_error, Es, Ws})
+	    end,
 
 		?LOG_DEBUG("config:load/1 - Loading local configuration module: ~w", [Module]),					
 		case code:load_binary(Module, Path, ObjectCode) of
@@ -29,7 +37,7 @@ load(Path) ->
 				                   true -> ok
 				                 end
 					   end, 
-					   [{init,0}, {get_config,1}]),
+					   [{init,0}, {get_config,1}, {get_mount_point,2}]),
 		
 		?LOG_DEBUG("config:load/1 - Running configuration initialiser...", []),
 		case Module:init() of
@@ -62,5 +70,8 @@ log_compiler_error( {File, FileErrors} ) ->
 log_line_error(File, Line, Module, Desc) ->
 	?LOG_ERROR("\t~s:~w ~s", [File, Line, Module:format_error(Desc)]).
 
--spec get_config(config_handle()) -> ems_config().
+-spec get_config(handle()) -> ems_config().
 get_config({Cookie,Module}) -> Module:get_config(Cookie).
+
+-spec get_mount_point(handle(), string()) -> mount_point().
+get_mount_point({Cookie, Module}, Name) -> Module:get_mount_point(Cookie, Name).

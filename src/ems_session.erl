@@ -106,7 +106,7 @@ handle_rtsp_request(Request, Headers, Body, Connection, State) ->
 %% @spec handle_request(Method, Sequence, Request, Headers, Body, 
 %%         Connection, State) -> NewState
 %% @end
-%% ----------------------------------------------------------------------------    
+%% ----------------------------------------------------------------------------
 handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
   {_,_,_,_, ContentType} = rtsp:get_request_info(Request,Headers),
   

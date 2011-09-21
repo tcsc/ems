@@ -197,7 +197,7 @@ format_number_list([], Result) ->
 %%       Body = binary()
 %% @end
 %% ----------------------------------------------------------------------------- 
-format_message(Message,Headers,Body) when is_record(Message,rtsp_request) ->
+format_message(_Message,_Headers,_Body) when is_record(_Message,rtsp_request) ->
   << >>;
   
 format_message(Message,Headers,Body) when is_record(Message,rtsp_response) ->
@@ -281,7 +281,7 @@ parse_method(MethodName) ->
 %% -----------------------------------------------------------------------------
 %%
 %% -----------------------------------------------------------------------------  
-parse_response_line(Data) ->
+parse_response_line(_Data) ->
   {response, {}}.
 
 %% -----------------------------------------------------------------------------
@@ -407,7 +407,7 @@ find_eom(Offset, Data) when Offset < size(Data) ->
     _ -> find_eom(Offset+1,Data)
   end;
 
-find_eom(Offset, Data) ->
+find_eom(_Offset, _Data) ->
   notfound.
 
 %% ----------------------------------------------------------------------------  
@@ -445,7 +445,8 @@ format_transport(TransportSpec) ->
 %%
 %% ----------------------------------------------------------------------------  
 format_transport_attributes(AttributeList) ->
-  String = format_transport_attributes(AttributeList, []).
+  String = format_transport_attributes(AttributeList, []),
+	String.
 
 %% ----------------------------------------------------------------------------
 %%

@@ -113,4 +113,3 @@ unquote(Text) ->
 %% ----------------------------------------------------------------------------  
 int_to_string(Value) ->
   lists:flatten(io_lib:format("~p", [Value])).
-  
