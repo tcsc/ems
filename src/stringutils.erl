@@ -50,7 +50,7 @@ to_int_def(String, Default) ->
   try
     list_to_integer(String)
   catch
-    error:badarg -> default
+    error:badarg -> Default
   end.
 
 %% ----------------------------------------------------------------------------
@@ -89,14 +89,13 @@ split_on_last(Char, String) ->
 index_of(Char, String) ->
   index_of(1, Char, String).
   
-index_of(Index, Char, [H|T]) when Char =:= H ->
+index_of(Index, Char, [H|_]) when Char =:= H ->
   Index;
 
 index_of(Index, Char, [H|T]) when Char =/= H ->
   index_of(Index+1, Char, T);
   
-index_of(Index, Char, []) ->
-  0.
+index_of(_, _, []) -> 0.
 
 %% ----------------------------------------------------------------------------
 %% @doc

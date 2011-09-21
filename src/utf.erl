@@ -99,5 +99,5 @@ string_to_utf8([Char|Str], Utf8) when Char < 16#110000 ->
   string_to_utf8(Str, [EncodedChar|Utf8]);
   
 % bad character
-string_to_utf8([Char|Str], Utf8) ->
+string_to_utf8([Char|_], _Utf8) ->
   throw({badarg, Char}).
