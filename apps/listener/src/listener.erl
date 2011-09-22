@@ -17,10 +17,9 @@
 %% ============================================================================
 %% Records, Macros, etc.
 %% ============================================================================
--type mgr() :: pid().
--type listener() :: {term(), pid()}.
+-opaque listener() :: {term(), pid()}.
 -type accept_callback() :: fun((inet:socket(), inet:ip_address()) -> any()).
--export_type([mgr/0, listener/0, accept_callback/0]).
+-export_type([listener/0, accept_callback/0]).
 
 -record(listener_state, { name     :: string(), 
                           ip       :: inet:ip_address(), 
@@ -40,7 +39,7 @@ well_known() -> tcp_listener.
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
--spec start_link() -> {'ok', mgr()} | {'ignore'} | {'error', any()}.
+-spec start_link() -> {'ok', pid()} | {'ignore'} | {'error', any()}.
 start_link() ->
 	?LOG_DEBUG("listener:start_link/0 - Starting Listener Supervisor", []),
 	case supervisor:start_link({local, well_known()}, ?MODULE, []) of

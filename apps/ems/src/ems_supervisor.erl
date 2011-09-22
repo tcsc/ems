@@ -54,7 +54,6 @@ init(ConfigHandle) ->
 	
 	SupervisorFlags = {RestartStrategy, MaxRestarts, MaxTimeBetweenRestarts},
 	Config = ems_config:get_config(ConfigHandle),
-	RtspConfig = lists:keyfind(rtsp, 1, Config),
 	
 	ChildSpec = 
 	[	
@@ -64,15 +63,8 @@ init(ConfigHandle) ->
 			2000,
 			worker,
 			[digest_auth_server]},
-		{rtsp_server,
-			{rtsp_server, start_link, [ConfigHandle, RtspConfig] },
-			permanent,
-			2000,
-			worker,
-			[rtsp_server]
-		},
 		{ems_server,
-			{ems_server, start_link, []},
+			{ems_server, start_link, [Config]},
 			permanent,
 			2000,
 			worker,

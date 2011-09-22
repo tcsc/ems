@@ -3,16 +3,22 @@
 
 -include("logging.hrl").
 -include("rtsp.hrl").
+-define(RTSP_SVR, rtsp_server).
 
 %% ============================================================================
 %% Type definitions
 %% ============================================================================
--type svr() :: pid().
 -type_export([svr/0]).
 
+-record(listener, { 
+	address  :: inet:ip_address(),
+	port     :: integer(),
+	listener :: listener:listener()
+	}).
+-type listener() :: #listener{}.
+
 -record(state, { server_string :: string(),
-								 config_handle :: ems_config:handle(),
-								 listeners     :: listener:listener(),
+								 listeners     :: [listener()],
 								 auth_svr      :: rtsp_auth:svr(),
 								 connections   :: [rtsp_connection:conn()]
 							 }).
@@ -32,52 +38,31 @@
 %% ============================================================================
 %% Public API
 %% ============================================================================
--export([start_link/2, add_listener/2]).
-
--compile(inline).
-well_known() -> rtsp_server. 
+-export([start_link/0, add_listener/3]).
 
 %% ----------------------------------------------------------------------------
 %% @doc Starts the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec start_link(ems_config:handle(), any()) -> {ok, svr()} | {error, any()}.
-start_link(ConfigHandle, {rtsp, Config}) ->
-	?LOG_DEBUG("rtsp_server:start_link/1 - Config: {rtsp, ~w}", [Config]),
+-spec start_link() -> {ok, pid()} | {error, any()}.
+start_link() ->
+	?LOG_DEBUG("rtsp_server:start_link/1", []),
 
 	State = #state{ server_string = "EMS RTSP Service/0.1",
 	                listeners     = [],
-									config_handle = ConfigHandle,
-									connections   = []},
+									connections   = [] },
 	
-	case gen_server:start_link({local,well_known()}, ?MODULE, State, []) of
-		{ok, Pid} -> create_listeners(Config),
-								 {ok, Pid};
-		Err -> Err
-	end.
+	gen_server:start_link({local,?RTSP_SVR}, ?MODULE, State, []).
 		
-create_listeners(Config) ->
-	Ports = case lists:keyfind(ports, 1, Config) of
-						{ports, Ps} -> Ps;
-						false -> [554]
-					end,
-
-	Bind = fun(P) -> 
-		{ok, _Pid} = add_listener({0,0,0,0}, P)
-	end,
-	
-	lists:foreach(Bind, Ports).
-	
-
 %% ----------------------------------------------------------------------------
 %% @doc Adds a local network binding to the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec add_listener(inet:ip_addr(), integer()) -> {ok, listener:listener() } | 
-                                                 {error, any()}.
-add_listener(Address, Port) ->
-	?LOG_DEBUG("rtsp_server:add_listener/2 - ~w:~w", [Address, Port]),
-	gen_server:call(rtsp_server, {bind, Address, Port}).
+-spec add_listener(inet:ip_addr(), integer(), rtsp:request_callback()) -> {ok, listener:listener() } | 
+                                                                          {error, any()}.
+add_listener(Address, Port, Callback) ->
+	?LOG_DEBUG("rtsp_server:add_listener/3 - ~w:~w", [Address, Port]),
+	gen_server:call(rtsp_server, {bind, Address, Port, Callback}).
 
 %% ============================================================================
 %% Callbacks
@@ -88,9 +73,9 @@ add_listener(Address, Port) ->
 %% @spec new_connection(Socket) -> ok
 %% @end
 %% ----------------------------------------------------------------------------
-new_connection(Svr, Socket, _Addr) ->
+new_connection(Svr, Socket, _Addr, Callback) ->
 	?LOG_DEBUG("rtsp_server:new_connection/1 - spawning process to handle connection, ~w", [Svr]),
-	{ok, Conn} = gen_server:call(Svr, spawn_connection),
+	{ok, Conn} = gen_server:call(Svr, {spawn_connection, Callback}),
 	
 	?LOG_DEBUG("rtsp_server:new_connection/1 - forwarding socket to connection", []),
 	rtsp_connection:take_socket(Conn, Socket),
@@ -115,23 +100,27 @@ init(State) ->
 %% @spec handle_call(Request,From,State) -> {noreply, State}
 %% @end
 %% ----------------------------------------------------------------------------
-handle_call(spawn_connection, _From, State) ->
+handle_call({spawn_connection, Callback}, _From, State) ->
 	?LOG_DEBUG("rtsp_server:new_connection/1 - spawning connection handler", []),
 	ServerString = State#state.server_string,
-	ConfigHandle = State#state.config_handle,
-	case rtsp_connection:new(self(), ServerString, ConfigHandle) of 
+	case rtsp_connection:new(self(), ServerString, Callback) of 
 		{ok, Pid} -> Cs = [ Pid | State#state.connections ],
 		             StateP = State#state{ connections = Cs },
 		             {reply, {ok,Pid}, StateP};
 		err -> {reply, error, State}
 	end;
 
-handle_call({bind, Address, Port}, _From, State) ->
+handle_call({bind, Address, Port, Callback}, _From, State) ->
 	?LOG_DEBUG("rtsp_server:handle_call/3 - attempting to bind to ~w:~w", [Address, Port]),
 	Me = self(),
-	Callback = fun(Socket, RemoteAddr) -> new_connection(Me, Socket, RemoteAddr) end,
-	case listener:add(Address, Port, Callback) of
-		{ok, L} -> Ls = [ {L, Address, Port} | State#state.listeners ],
+	AcceptCallback = fun(Socket, RemoteAddr) ->
+		new_connection(Me, Socket, RemoteAddr, Callback) 
+	end,
+	case listener:add(Address, Port, AcceptCallback) of
+		{ok, L} -> Listener = #listener{ address  = Address,
+		                                 port     = Port,
+		                                 listener = L },
+			 				 Ls = [ Listener | State#state.listeners ],
 		           StateP = State#state{listeners = Ls},
 				       {reply, {ok, L}, StateP};
 				

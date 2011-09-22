@@ -16,7 +16,7 @@
 %% ============================================================================
 %% Exported Functions
 %% ============================================================================
--export([start_link/0]).
+-export([start_link/1, stop/1]).
 
 %% ============================================================================
 %% Records, macros, etc
@@ -28,18 +28,37 @@
 %% @spec start_link(IpAddress,Port) -> {ok, Pid} | {error, Reason}
 %% @end
 %% ----------------------------------------------------------------------------
-start_link() ->
-  ?LOG_INFO("ems_server:start_link/0", []),
+start_link(Config) ->
+  ?LOG_INFO("ems_server:start_link/1", []),
   State = #server_state{name=ems_server},
   
   case gen_server:start_link({local,ems_server}, ?MODULE, State, []) of
     {ok,Pid} -> 
       ?LOG_DEBUG("ems_server:start_link/0 - server started on ~w", [Pid]),
+      RtspConfig = case lists:keyfind(rtsp, 1, Config) of
+                     {rtsp, Rtsp} -> Rtsp;
+                     false -> []
+                   end,
+      configure_rtsp_server(RtspConfig),
       {ok,Pid};
+
     Error ->
       ?LOG_DEBUG("ems_server:start_link/0 - server failed to start ~w", [Error]),
       Error
   end.    
+
+configure_rtsp_server(Config) -> 
+  Ports = case lists:keyfind(ports, 1, Config) of
+            {ports, Ps} -> Ps;
+            false -> [554]
+          end,
+  Handler = fun(Conn, Request, Headers, Body) -> 
+              ems_rtsp_bridge:handle_request(Conn, Request, Headers, Body)
+            end,
+  Bind = fun(P) -> 
+            rtsp_server:add_listener({0,0,0,0}, P, Handler)
+         end,
+  lists:foreach(Bind, Ports).
 
 %% ----------------------------------------------------------------------------
 %% @doc Stops the network server.
@@ -93,7 +112,7 @@ handle_info(_Info, State) ->
   ?LOG_DEBUG("ems_server:handle_info/2",[]),
   {noreply, State}.
   
-terminate(Reason, State) ->
+terminate(Reason, _State) ->
   ?LOG_DEBUG("ems_server:terminate/2 - ~w",[Reason]),
   ok.
   

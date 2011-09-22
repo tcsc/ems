@@ -10,6 +10,7 @@
 start() ->
 	?LOG_INFO("Starting EMS application", []),	
 	application:start(listener),
+	application:start(rtsp),
 	application:start(ems).
 	
 %% ----------------------------------------------------------------------------

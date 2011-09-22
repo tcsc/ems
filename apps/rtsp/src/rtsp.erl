@@ -1,32 +1,83 @@
--module (rtsp).
+-module(rtsp).
+-behaviour(application).
+-behaviour(supervisor).
 -include("rtsp.hrl").
 -include("logging.hrl").
 
 %% ============================================================================
-%% Parsing Exports 
+%% Behaviour exports
+%% ============================================================================
+-export([start/2, stop/1, init/1]).
+
+%% ============================================================================
+%% Public API
 %% ============================================================================
 -export([
+	start/0,
+	start_link/0,
   parse_message/1,
   format_message/3,
+  format_transport/1,
   find_eom/1,
   translate_status/1,
-  parse_transport/1]).
+  parse_transport/1,
+	get_header/2, 
+	get_request_info/2]).
 
 %% ============================================================================
-%% Formatting Exports
+%%
 %% ============================================================================
--export([
-  format_transport/1]).
-
-%% ============================================================================
-%% Utility Exports
-%% ============================================================================
--export([get_header/2, get_request_info/2]).
+-type request_callback() :: fun((
+	rtsp_connection:conn(), 
+	rtsp:message(),
+	binary()) -> any()).
+	
+-type message() :: #rtsp_message{}.
+	
+-export_type([message/0, request_callback/0]).
 
 %% ============================================================================
 %% Definitions
 %% ============================================================================
 -define(SP, 16#20).
+-define(RTSP_PID, rtsp_server).
+
+%% ============================================================================
+%% Application callbacks
+%% ============================================================================
+start() ->
+	application:start(listener),
+	application:start(rtsp).
+	
+start(normal,_) ->
+	rtsp:start_link().
+	
+stop(_) -> rtsp:stop().
+
+start_link() -> 
+	case supervisor:start_link({local, rtsp_sup}, ?MODULE, []) of
+		{ok, Pid} -> 
+			?LOG_DEBUG("rtsp:start_link/0 - RTSP supervisor started on ~w", [Pid]),
+			{ok, Pid};
+			
+		Err -> 
+			?LOG_ERROR("rtsp:start_link/0 - RTSP supervisor failed to start ~w", [Err]),
+			Err
+	end.
+
+%% ============================================================================
+%% Supervisor callbacks
+%% ============================================================================
+init(_) -> 
+	ChildSpec = {
+		rtsp_server,
+		{rtsp_server, start_link, []},
+    permanent,
+		brutal_kill,
+		supervisor,
+		[rtsp_server]
+	},
+	{ok, {{one_for_one, 10, 1}, [ChildSpec]}}.
 
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary as an RTSP message. 

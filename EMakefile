@@ -1,4 +1,15 @@
-{"apps/listener/src/*", [debug_info, {outdir, "apps/listener/ebin"}, {i, "include"}]}.
-{"apps/ems/src/*",      [debug_info, {outdir, "apps/ems/ebin"}, {i, "include"}]}.
+{"apps/listener/src/*", [debug_info, 
+                         {outdir, "apps/listener/ebin"},
+                         {i, "include"}]}.
+
+{"apps/rtsp/src/*",     [debug_info, 
+                         {outdir, "apps/rtsp/ebin"},
+                         {i, "apps/rtsp/include"},  
+                         {i, "include"}]}.
+
+{"apps/ems/src/*",      [debug_info, 
+						 {outdir, "apps/ems/ebin"}, 
+						 {i, "include"},
+						 {i, "apps/rtsp/include"}]}
+						.
 {"apps/ems/src/rtp/*",  [debug_info, {outdir, "apps/ems/ebin"}, {i, "include"}]}.
-{"apps/ems/src/rtsp/*", [debug_info, {outdir, "apps/ems/ebin"}, {i, "include"}]}.

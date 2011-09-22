@@ -9,7 +9,7 @@ EBIN=./ebin
 ERLIB=/opt/local/lib/erlang
 ERLC=erlc
 ERL=erl
-ERL_FLAGS=-smp enable -pa apps/listener/ebin -pa apps/ems/ebin -pa ebin
+ERL_FLAGS=-smp enable -pa apps/listener/ebin -pa apps/rtsp/ebin -pa apps/ems/ebin -pa ebin
 ERL_COMPILE_FLAGS += +debug_info +native -smp
 APP_TARGET=$(EBIN)/$(APP_NAME).app
 APP_SRC=$(ESRC)/$(APP_NAME).app
@@ -21,7 +21,7 @@ all:
 	$(ERL) -make $(ERL_COMPILE_FLAGS)
 
 inter: all
-	erl $(ERL_FLAGS) 
+	erl $(ERL_FLAGS) -boot start_sasl
 
 run: all
 	erl $(ERL_FLAGS) -run ems -noshell
@@ -35,7 +35,7 @@ dialyzer: default
 # Note: In the open-source build, clean must not destroy the preloaded
 # beam files.
 clean:
-	rm -fr *.beam
+	rm -fr apps/*/ebin/*.beam
 	rm -f erl_crash.dump
 
 $(APPUP_TARGET): $(APPUP_SRC) vsn.mk

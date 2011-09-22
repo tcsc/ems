@@ -5,9 +5,9 @@
 -include("rtsp.hrl").
 
 %% ============================================================================
-%% exports
+%% Public API
 %% ============================================================================
--export([new/3, take_socket/2, get_client_address/1]).
+-export([new/3, take_socket/2, get_client_address/1, send_response/5]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -24,9 +24,7 @@
 %% ============================================================================
 -export([
   waiting_for_socket/2, 
-  ready/2, 
-  send_response/5, 
-  send_server_error/3]).
+  ready/2 ]).
 
 %% ============================================================================
 %% Internal exports
@@ -47,7 +45,7 @@
                  pending_message,
                  pending_requests,
                  pending_data      :: binary(),
-								 config_handle     :: ems_config:handle()
+								 callback          :: rtsp:request_callback()
                }).
 
 -define(SP,16#20).
@@ -55,13 +53,13 @@
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
--spec new(rtsp_svr:svr(), string(), ems_config:handle()) -> {'ok', conn()} | {'error', any()}.
-new(_Owner, ServerStr, ConfigHandle) -> 
+-spec new(rtsp_svr:svr(), string(), rtsp:request_callback()) -> {'ok', conn()} | {'error', any()}.
+new(_Owner, ServerStr, Callback) -> 
   ?LOG_DEBUG("rtsp_connection:new/1", []),
   State = #state{ server_str       = ServerStr,
-									config_handle    = ConfigHandle,
                   pending_data     = << >>,
-                  pending_requests = dict:new()
+                  pending_requests = dict:new(),
+									callback         = Callback
                 },
   gen_fsm:start_link(?MODULE, State, []).
 
@@ -77,9 +75,6 @@ take_socket(Conn, Socket) ->
 %%
 %% ---------------------------------------------------------------------------- 
 
-get_config_handle(Conn) -> 
-	gen_fsm:sync_send_all_state_event(Conn, get_config_handle).
-  
 get_client_address(Conn) ->
 	gen_fsm:sync_send_all_state_event(Conn, get_client_address).
 
@@ -154,10 +149,6 @@ handle_info(Info, StateName, StateData) ->
 handle_sync_event(get_client_address, _From, StateName, State) ->
   {ok, {Host, _}} = inet:sockname(State#state.socket),
   {reply, Host, StateName, State};
-
-handle_sync_event(get_config_handle, _From, StateName, State) ->
-	Config = State#state.config_handle,
-	{reply, Config, StateName, State};
 
 handle_sync_event(_Event, _From, StateName, StateData) -> 
   {next_state, StateName, StateData}.
@@ -307,15 +298,15 @@ dispatch_message(Request,Headers,Body,State) when is_record(Request,rtsp_request
   ?LOG_DEBUG("rtsp_connection:dispatch_message/4 - handling #~w ~s ~s",
     [Sequence,Method,Uri]),
   
-  StateP = register_pending_request(Sequence, Request, State),
-	Me = self(),
-	Handler = fun() -> 
-		          try 
-								handle_request(Me, Method, Sequence, Request, Headers, Body)
-							catch
-								Err -> send_server_error(Me, Err, Sequence)
-							end
-						end,
+  StateP   = register_pending_request(Sequence, Request, State),
+	Me       = self(),
+	Callback = State#state.callback, 
+	Handler  = fun() -> try 
+								        Callback(Me, Request, Headers, Body)
+							 				catch
+												 Err -> send_server_error(Me, Err, Sequence)
+										 	end
+						 end,
 	erlang:spawn(Handler),
 	StateP.
 	
@@ -375,35 +366,6 @@ build_response_headers(Sequence, ContentLength, Headers) ->
     content_type = ContentType, 
     headers = ServerHeader
   }.  
-  
-%% ----------------------------------------------------------------------------
-%% @spec handle_request(Method, Request,Headers,Body,State) -> Result
-%%       Method = options | accounce | setup | play | teardown
-%% @end
-%% ----------------------------------------------------------------------------  
-handle_request(Conn, options, Sequence, _, _, _) ->
-  PublicOptions = [?RTSP_METHOD_ANNOUNCE,
-                   ?RTSP_METHOD_DESCRIBE,
-                   ?RTSP_METHOD_SETUP,
-                   ?RTSP_METHOD_PLAY,
-                   ?RTSP_METHOD_PAUSE,
-                   ?RTSP_METHOD_TEARDOWN,
-                   ?RTSP_METHOD_RECORD],
-  Headers = [{"Public", string:join(PublicOptions, ", ")}],
-  send_response(Conn, Sequence, ok, Headers, << >>);
-
-handle_request(Conn, describe, Sequence, _Request, _Headers, _Body) -> 
-	_Config = get_config_handle(Conn),
-	send_response(Conn, Sequence, not_implemented, [], << >>);
-
-%handle_request(Conn, describe, Request, Headers, Body) -> 
-%	Uri = Request#rtsp_request.uri,
-%	{_,_,_,Path} = url:parse(Uri),
-%	Config = get_config_handle(Conn),
-%	MountPoint = case ems_config:get_mount_point(Config, Path) of 
-
-handle_request(Conn, _Method, Sequence, _Request, _Headers, _Body) ->
-  send_response(Conn, Sequence, not_implemented, [], << >>).
 
 %%with_authenticated_user_do() ->
 	
