@@ -62,7 +62,7 @@ start_link() ->
 %%
 %%      Note that the callback handler is guaranteed <em>not</em> to be invoked 
 %%      on the underlying connection's process, making calls back to the RTSP 
-%%      connection deadlocl-safe.
+%%      connection deadlock-safe.
 %% @end
 %% ----------------------------------------------------------------------------
 -spec add_listener(inet:ip_addr(), integer(), rtsp:request_callback()) -> {ok, listener:listener() } | 
@@ -140,7 +140,7 @@ handle_call({bind, Address, Port, Callback}, _From, State) ->
     Err -> ?LOG_ERROR("rtsp_server:handle_call/3 - bind failed with ~w", [Err]),
            {reply, {error, Err}, State}
   end;
-
+  
 handle_call({request, _Request, _Body}, _From, State) ->
   {noreply, State};
 

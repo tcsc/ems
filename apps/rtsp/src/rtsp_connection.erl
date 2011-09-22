@@ -41,11 +41,11 @@
 
 -record(state, { server_str        :: string(),
                  socket            :: inet:socket(),
-								 sender            :: pid(),
+                 sender            :: pid(),
                  pending_message,
                  pending_requests,
                  pending_data      :: binary(),
-								 callback          :: rtsp:request_callback()
+                 callback          :: rtsp:request_callback()
                }).
 
 -define(SP,16#20).
@@ -59,24 +59,24 @@ new(_Owner, ServerStr, Callback) ->
   State = #state{ server_str       = ServerStr,
                   pending_data     = << >>,
                   pending_requests = dict:new(),
-									callback         = Callback
+                  callback         = Callback
                 },
   gen_fsm:start_link(?MODULE, State, []).
 
 take_socket(Conn, Socket) ->
-	?LOG_DEBUG("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", [Conn]),
-	ok = gen_tcp:controlling_process(Socket, Conn),
-	
-	?LOG_DEBUG("rtsp_connection:take_socket/2- forwarding socket to connection", []),
-	gen_fsm:send_event(Conn, {socket, Socket}),
-	ok.
+  ?LOG_DEBUG("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", [Conn]),
+  ok = gen_tcp:controlling_process(Socket, Conn),
+  
+  ?LOG_DEBUG("rtsp_connection:take_socket/2- forwarding socket to connection", []),
+  gen_fsm:send_event(Conn, {socket, Socket}),
+  ok.
 
 %% ---------------------------------------------------------------------------- 
 %%
 %% ---------------------------------------------------------------------------- 
 
 get_client_address(Conn) ->
-	gen_fsm:sync_send_all_state_event(Conn, get_client_address).
+  gen_fsm:sync_send_all_state_event(Conn, get_client_address).
 
 %% ---------------------------------------------------------------------------- 
 %% 
@@ -93,19 +93,19 @@ init(State) ->
 %%                {stop,Reason,NewStateData}
 %% ----------------------------------------------------------------------------
 handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, State) ->
-	?LOG_DEBUG("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
-		[Sequence, Status]),
+  ?LOG_DEBUG("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
+    [Sequence, Status]),
 
-	StateP = case deregister_pending_request(Sequence, State) of 
-		{Rq, S} -> RtspVersion = Rq#rtsp_request.version,
-	             AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
-	             Response = #rtsp_response{status = Status, version = RtspVersion}, 
-	             Bytes = rtsp:format_message(Response, AllHeaders, Body),
-	             send_data(S, Bytes),
-	             S;
-	    _ -> State
+  StateP = case deregister_pending_request(Sequence, State) of 
+    {Rq, S} -> RtspVersion = Rq#rtsp_request.version,
+               AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
+               Response = #rtsp_response{status = Status, version = RtspVersion}, 
+               Bytes = rtsp:format_message(Response, AllHeaders, Body),
+               send_data(S, Bytes),
+               S;
+      _ -> State
   end,
-	{next_state, StateName, StateP};
+  {next_state, StateName, StateP};
 
 handle_event(_Event, StateName, StateData) -> 
   {next_state, StateName, StateData}.
@@ -174,8 +174,8 @@ code_change(_OldVsn, StateName, StateData, _Extra) ->
 %% ----------------------------------------------------------------------------
 -spec send_response(conn(), integer(), any(), [any()], binary()) -> any().
 send_response(Conn, Sequence, Status, ExtraHeaders, Body) -> 
-	Event = {send_response, Sequence, Status, ExtraHeaders, Body},
-	gen_fsm:send_all_state_event(Conn, Event).
+  Event = {send_response, Sequence, Status, ExtraHeaders, Body},
+  gen_fsm:send_all_state_event(Conn, Event).
 
 %% ============================================================================
 %% State callbacks
@@ -300,17 +300,17 @@ dispatch_message(Request,Headers,Body,State) when is_record(Request,rtsp_request
     [Sequence,Method,Uri]),
   
   StateP   = register_pending_request(Sequence, Request, State),
-	Me       = self(),
-	Callback = State#state.callback, 
-	Handler  = fun() -> try 
-								        Callback(Me, Request, Headers, Body)
-							 				catch
-												 Err -> send_server_error(Me, Err, Sequence)
-										 	end
-						 end,
-	erlang:spawn(Handler),
-	StateP.
-	
+  Me       = self(),
+  Callback = State#state.callback, 
+  Handler  = fun() -> try 
+                        Callback(Me, Request, Headers, Body)
+                      catch
+                         Err -> send_server_error(Me, Err, Sequence)
+                      end
+             end,
+  erlang:spawn(Handler),
+  StateP.
+  
 %% ----------------------------------------------------------------------------
 %% @doc Generates an RTSP response for a failure and forwards it to the
 %%      supplied RTSP connection for transmission back to the client.
@@ -369,7 +369,7 @@ build_response_headers(Sequence, ContentLength, Headers) ->
   }.  
 
 %%with_authenticated_user_do() ->
-	
+  
 %% ============================================================================
 %% Utilility functions
 %% ============================================================================
