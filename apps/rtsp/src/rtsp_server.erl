@@ -1,6 +1,6 @@
 -module(rtsp_server).
+-author("Trent Clarke <trent.clarke@gmail.com>").
 -behaviour(gen_server).
-
 -include("logging.hrl").
 -include("rtsp.hrl").
 -define(RTSP_SVR, rtsp_server).
@@ -55,7 +55,14 @@ start_link() ->
 	gen_server:start_link({local,?RTSP_SVR}, ?MODULE, State, []).
 		
 %% ----------------------------------------------------------------------------
-%% @doc Adds a local network binding to the RTSP server
+%% @doc Adds a local network binding to the RTSP server. The RTSP server 
+%%      attempts to bind to the supplied local address and port and if 
+%%      successful, will apply the request callback to any RTSP requests 
+%%      from connections that are accepted from this binding.
+%%
+%%      Note that the callback handler is guaranteed <em>not</em> to be invoked 
+%%      on the underlying connection's process, making calls back to the RTSP 
+%%      connection deadlocl-safe.
 %% @end
 %% ----------------------------------------------------------------------------
 -spec add_listener(inet:ip_addr(), integer(), rtsp:request_callback()) -> {ok, listener:listener() } | 
@@ -69,15 +76,22 @@ add_listener(Address, Port, Callback) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @doc Handles 
-%% @spec new_connection(Socket) -> ok
+%% @doc Handles a new connection from the TCP Listener. Invoked via a lambda 
+%%      by the listener process.
+%% @private
 %% @end
 %% ----------------------------------------------------------------------------
-new_connection(Svr, Socket, _Addr, Callback) ->
-	?LOG_DEBUG("rtsp_server:new_connection/1 - spawning process to handle connection, ~w", [Svr]),
-	{ok, Conn} = gen_server:call(Svr, {spawn_connection, Callback}),
+-spec new_connection(inets:socket(), 
+                     inets:ip_addr(), 
+                     rtsp:request_callback()) -> ok.
+new_connection(Socket, _Addr, RequestCallback) ->
+	?LOG_DEBUG("rtsp_server:new_connection/3 - spawning process to handle connection", []),
+	{ok, Conn} = gen_server:call(rtsp_server, {spawn_connection, RequestCallback}),
 	
-	?LOG_DEBUG("rtsp_server:new_connection/1 - forwarding socket to connection", []),
+  ?LOG_DEBUG("rtsp_server:new_connection/3 - forwarding socket to connection", []),
+	% NB: must be called from the process that currently owns the socket (i.e. the 
+  % listener process in this case), otherwise re-assigning ownership of the 
+  % socket will fail.
 	rtsp_connection:take_socket(Conn, Socket),
 	ok.
 
@@ -97,7 +111,7 @@ init(State) ->
 	
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen_server in response to a call message.
-%% @spec handle_call(Request,From,State) -> {noreply, State}
+%% @private
 %% @end
 %% ----------------------------------------------------------------------------
 handle_call({spawn_connection, Callback}, _From, State) ->
@@ -112,9 +126,8 @@ handle_call({spawn_connection, Callback}, _From, State) ->
 
 handle_call({bind, Address, Port, Callback}, _From, State) ->
 	?LOG_DEBUG("rtsp_server:handle_call/3 - attempting to bind to ~w:~w", [Address, Port]),
-	Me = self(),
 	AcceptCallback = fun(Socket, RemoteAddr) ->
-		new_connection(Me, Socket, RemoteAddr, Callback) 
+		new_connection(Socket, RemoteAddr, Callback) 
 	end,
 	case listener:add(Address, Port, AcceptCallback) of
 		{ok, L} -> Listener = #listener{ address  = Address,
