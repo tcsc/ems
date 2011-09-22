@@ -101,7 +101,8 @@ handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, S
 	             AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
 	             Response = #rtsp_response{status = Status, version = RtspVersion}, 
 	             Bytes = rtsp:format_message(Response, AllHeaders, Body),
-	             send_data(S, Bytes);
+	             send_data(S, Bytes),
+	             S;
 	    _ -> State
   end,
 	{next_state, StateName, StateP};
@@ -406,9 +407,7 @@ deregister_pending_request(Seq, State) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @doc 
-%% @spec send_data(State, Data) -> Result
-%%       Result = ok | {error, Reason}
+%% @doc Enqueues data with the sender process for transmission to the client
 %% @end
 %% ----------------------------------------------------------------------------
 send_data(_State = #state{sender=SenderPid}, Data) ->
