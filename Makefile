@@ -4,12 +4,12 @@ APP_NAME=ems
 PFX=ems
 VSN=$(ERLANG_MEDIA_SERVER_VSN)
 
-ESRC=./src
-EBIN=./ebin
+ESRC=src
+EBIN=ebin
 ERLIB=/opt/local/lib/erlang
 ERLC=erlc
 ERL=erl
-ERL_FLAGS=-smp enable -pa apps/listener/ebin -pa apps/rtsp/ebin -pa apps/ems/ebin -pa ebin
+ERL_FLAGS=-smp enable -pa apps/listener/ebin -pa apps/rtsp/ebin -pa apps/ems/ebin
 ERL_COMPILE_FLAGS += +debug_info +native -smp
 APP_TARGET=$(EBIN)/$(APP_NAME).app
 APP_SRC=$(ESRC)/$(APP_NAME).app
