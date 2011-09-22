@@ -76,7 +76,7 @@ create_listeners(Config) ->
 -spec add_listener(inet:ip_addr(), integer()) -> {ok, listener:listener() } | 
                                                  {error, any()}.
 add_listener(Address, Port) ->
-	?LOG_DEBUG(":add_listener/2 - ~w:~w", [Address, Port]),
+	?LOG_DEBUG("rtsp_server:add_listener/2 - ~w:~w", [Address, Port]),
 	gen_server:call(rtsp_server, {bind, Address, Port}).
 
 %% ============================================================================
