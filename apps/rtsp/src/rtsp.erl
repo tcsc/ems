@@ -69,15 +69,23 @@ start_link() ->
 %% Supervisor callbacks
 %% ============================================================================
 init(_) -> 
-  ChildSpec = {
+  RtspServer = {
     rtsp_server,
     {rtsp_server, start_link, []},
     permanent,
     brutal_kill,
-    supervisor,
+    worker,
     [rtsp_server]
   },
-  {ok, {{one_for_one, 10, 1}, [ChildSpec]}}.
+  DigestServer = {
+    digest_server,
+    {rtsp_auth, start_link, []},
+    permanent,
+    brutal_kill,
+    worker,
+    [rtsp_auth]
+  },
+  {ok, {{one_for_one, 10, 1}, [DigestServer, RtspServer]}}.
 
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary as an RTSP message. 

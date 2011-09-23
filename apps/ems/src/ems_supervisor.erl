@@ -57,12 +57,6 @@ init(ConfigHandle) ->
 	
 	ChildSpec = 
 	[	
-		{digest_auth_server,
-			{rtsp_auth, start_link, []},
-			permanent,
-			2000,
-			worker,
-			[digest_auth_server]},
 		{ems_server,
 			{ems_server, start_link, [Config]},
 			permanent,
