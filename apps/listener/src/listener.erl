@@ -7,18 +7,18 @@
 %% ============================================================================
 %% External Exports
 %% ============================================================================
--export([start_link/0, init/1, add/3, remove/1]).
+-export([start_link/0, stop/0, init/1, add/3, remove/1]).
 
 %% ============================================================================
 %% Internal Exports
 %% ============================================================================
--export([well_known/0, init_listener/1, run_listener/1, accept/1]).
+-export([init_listener/1, run_listener/1, accept/1]).
 
 %% ============================================================================
 %% Records, Macros, etc.
 %% ============================================================================
 -opaque listener() :: {term(), pid()}.
--type accept_callback() :: fun((inet:socket(), inet:ip_address()) -> any()).
+-type accept_callback() :: fun((inet:socket(), {inet:ip_address(), integer()}) -> any()).
 -export_type([listener/0, accept_callback/0]).
 
 -record(listener_state, { name     :: string(), 
@@ -29,8 +29,7 @@
 												  callback :: accept_callback() }).
 -type listener_state() :: #listener_state{}.
 
--compile(inline).
-well_known() -> tcp_listener.
+-define(LISTENER_PROC, tcp_listener).
 
 %% ============================================================================
 %% Public API
@@ -39,24 +38,28 @@ well_known() -> tcp_listener.
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
--spec start_link() -> {'ok', pid()} | {'ignore'} | {'error', any()}.
+-spec start_link() -> {'ok', pid()} | 'ignore' | {'error', any()}.
 start_link() ->
 	?LOG_DEBUG("listener:start_link/0 - Starting Listener Supervisor", []),
-	case supervisor:start_link({local, well_known()}, ?MODULE, []) of
+	case supervisor:start_link({local, ?LISTENER_PROC}, ?MODULE, []) of
 		{ok, Pid} -> 
 			?LOG_DEBUG("listener:start_link/0 - Listener Supervisor started on ~w", [Pid]),
-			{ok, Pid}
+			{ok, Pid};
+			
+		E ->
+		  ?LOG_ERROR("listener:start_link/0 - Listener Supervisor failed to start ~w", [E]),
+			E
 	end.
+
+stop() -> ok.
 
 %% ----------------------------------------------------------------------------	
 %% @doc Starts an individual TCP listener process
 %% @end
 %% ----------------------------------------------------------------------------
--spec add(inet:ip_address(), integer(), accept_callback()) -> {'ok', pid()} | {'error', any()}.
+-spec add(inet:ip_address(), integer(), accept_callback()) -> {'ok', listener()} | {'error', any()}.
 add(LocalAddress, Port, Callback) -> 
-	Supervisor = well_known(),
-	
-	?LOG_DEBUG("listener:add_listener/2 - starting listener for ~w:~w", [LocalAddress, Port]),
+	?LOG_DEBUG("listener:add_listener/3 - starting listener for ~w:~w", [LocalAddress, Port]),
 	Text = io_lib:format("listener_~w:~w", [LocalAddress,Port]),
 	Name = Name = list_to_atom(lists:flatten(Text)),
 	State = #listener_state{name=Name, ip=LocalAddress, port=Port, callback=Callback},
@@ -68,23 +71,23 @@ add(LocalAddress, Port, Callback) ->
 		worker,
 		[?MODULE]},
 	
-	case supervisor:start_child(Supervisor, ChildSpec) of
+	case supervisor:start_child(?LISTENER_PROC, ChildSpec) of
 		{ok, Pid} -> 
-			{Id, _, _, _} = lists:keyfind(Pid, 2, supervisor:which_children(Supervisor)),
+			{Id, _, _, _} = lists:keyfind(Pid, 2, supervisor:which_children(?LISTENER_PROC)),
 			{ok, {Id, Pid}};
 		
-		Err -> Err
+		{error, Err} ->
+		  ?LOG_ERROR("listener:add_listener/3 - failed to start listener: ~w", [Err]), 
+		  {error, Err}
 	end.
 	
 -spec remove(listener()) -> ok.
 remove({Id, _Pid}) ->
-	Supervisor = well_known(),
-	
 	?LOG_DEBUG("listener:remove/2 - terminating listener ~w", [Id]),
-	supervisor:terminate_child(Supervisor, Id),
+	supervisor:terminate_child(?LISTENER_PROC, Id),
 	
 	?LOG_DEBUG("listener:remove/2 - deleting listener child spec", []),
-	supervisor:terminate_child(Supervisor, Id),
+	supervisor:terminate_child(?LISTENER_PROC, Id),
 	ok.
 	
 %% ----------------------------------------------------------------------------
@@ -149,13 +152,11 @@ run_listener(State = #listener_state{ip=Address, port=Port}) ->
 %% ----------------------------------------------------------------------------
 -spec accept(listener_state()) -> any().
 accept(State = #listener_state{socket=Socket, callback=Callback}) ->
-	%?LOG_DEBUG("listener:accept/1 - accept", []),
-
 	case gen_tcp:accept(Socket) of
 		{ok, NewConnection} ->
-			{ok, PeerAddress} = inet:peername(NewConnection),
-			?LOG_DEBUG("listener:accept/1 - new connection from ~w", [PeerAddress]),			
-			Callback(NewConnection, PeerAddress),
+			{ok, {RemoteAddr, Port}} = inet:peername(NewConnection),
+			?LOG_DEBUG("listener:accept/1 - new connection from ~w:~w", [RemoteAddr, Port]),			
+			Callback(NewConnection, {RemoteAddr, Port}),
 			accept(State);
 			
 		{error, Reason} ->

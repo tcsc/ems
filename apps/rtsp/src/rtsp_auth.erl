@@ -14,10 +14,11 @@
 %% ============================================================================
 -type svr() :: pid().
 -type nonce() :: integer().
--record(ctx, { nonce :: nonce(), 
-               created :: integer(),
-               touched :: integer() }).
+-record(ctx, { nonce   :: nonce(), 
+               created :: calendar:t_now(),
+               touched :: calendar:t_now() }).
 -type ctx() :: #ctx{}.
+-opaque([svr/0]).
 
 -record(state, {db :: dict(), timer :: timer:tref()}).
 -type state() :: #state{}.
@@ -25,7 +26,7 @@
 %% ============================================================================
 %% Exported functions
 %% ============================================================================
--spec start_link() -> svr(). 
+-spec start_link() -> {ok, svr()} | {error, any()}.
 start_link() -> 
   gen_server:start_link({local, ?SERVER_NAME}, ?MODULE, [], []).
 
@@ -34,9 +35,9 @@ start_link() ->
 %%      for a connection 
 %% @end
 %% ----------------------------------------------------------------------------
--spec get_auth_nonce(rtsp:conn()) -> nonce().
+-spec get_auth_nonce(rtsp_connection:conn()) -> nonce().
 get_auth_nonce(Conn) ->
-  {ok, Ctx} = gen_server:call(?SERVER_NAME, {get_contex,Conn}),
+  {ok, Ctx} = gen_server:call(?SERVER_NAME, {get_context, Conn}),
   Ctx#ctx.nonce.
 
 %% ============================================================================
@@ -52,9 +53,12 @@ init(_) ->
 handle_call({get_context, Conn}, _, State) ->
   Db = State#state.db,
   {Ctx, DbP} = case dict:find(Conn, Db) of
-                 {ok, C} -> {C, dict:update(Conn, fun(X) -> touch(X) end, Db)};
-                 error -> C = new_context(),
-                          {C, dict:store(Conn, C, Db)}
+                 {ok, C} -> 
+                   {C, dict:update(Conn, fun(X) -> touch(X) end, Db)};
+                   
+                 error -> 
+                   C = new_context(),
+                   {C, dict:store(Conn, C, Db)}
                end,
   StateP = State#state{db = DbP},
   {reply, Ctx, StateP};
@@ -83,7 +87,7 @@ code_change(_, State, _) ->
 -spec new_context() -> ctx().
 new_context() -> 
   Now = erlang:now(),
-  Nonce = make_nonce(16 ),
+  Nonce = make_nonce(16),
   #ctx{nonce = Nonce, created = Now, touched = Now}.
 
 touch(Ctx) -> Ctx#ctx{touched = erlang:now()}.

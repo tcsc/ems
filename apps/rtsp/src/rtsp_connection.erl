@@ -7,7 +7,7 @@
 %% ============================================================================
 %% Public API
 %% ============================================================================
--export([new/3, take_socket/2, get_client_address/1, send_response/5]).
+-export([new/3, close/1, take_socket/2, get_client_address/1, send_response/5]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -37,7 +37,7 @@
 %% @end
 %% ----------------------------------------------------------------------------
 -type conn() :: pid().
--type_export([conn/0]).
+-opaque([conn/0]).
 
 -record(state, { server_str        :: string(),
                  socket            :: inet:socket(),
@@ -50,10 +50,16 @@
 
 -define(SP,16#20).
 
+
+%% ============================================================================
+%% Public API
+%% ============================================================================
+
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
--spec new(rtsp_svr:svr(), string(), rtsp:request_callback()) -> {'ok', conn()} | {'error', any()}.
+-spec new(rtsp_server:svr(), string(), rtsp:request_callback()) -> {'ok', conn()} | 
+                                                                   {'error', any()}.
 new(_Owner, ServerStr, Callback) -> 
   ?LOG_DEBUG("rtsp_connection:new/1", []),
   State = #state{ server_str       = ServerStr,
@@ -63,6 +69,9 @@ new(_Owner, ServerStr, Callback) ->
                 },
   gen_fsm:start_link(?MODULE, State, []).
 
+close(Conn) ->
+  gen_fsm:sync_send_all_state_event(Conn, quit).
+
 take_socket(Conn, Socket) ->
   ?LOG_DEBUG("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", [Conn]),
   ok = gen_tcp:controlling_process(Socket, Conn),
@@ -71,16 +80,12 @@ take_socket(Conn, Socket) ->
   gen_fsm:send_event(Conn, {socket, Socket}),
   ok.
 
-%% ---------------------------------------------------------------------------- 
-%%
-%% ---------------------------------------------------------------------------- 
-
 get_client_address(Conn) ->
   gen_fsm:sync_send_all_state_event(Conn, get_client_address).
 
-%% ---------------------------------------------------------------------------- 
-%% 
-%% ----------------------------------------------------------------------------
+%% ============================================================================
+%% gen_fsm API
+%% ============================================================================
 init(State) -> 
   ?LOG_DEBUG("rtsp_connection:init/1", []),
   {ok, waiting_for_socket, State}.
@@ -150,6 +155,9 @@ handle_info(Info, StateName, StateData) ->
 handle_sync_event(get_client_address, _From, StateName, State) ->
   {ok, {Host, _}} = inet:sockname(State#state.socket),
   {reply, Host, StateName, State};
+  
+handle_sync_event(quit, _, _, State) ->
+  {stop, normal, ok, State};
 
 handle_sync_event(_Event, _From, StateName, StateData) -> 
   {next_state, StateName, StateData}.
@@ -157,7 +165,9 @@ handle_sync_event(_Event, _From, StateName, StateData) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-terminate(_Reason, _StateName, _StateData) -> 
+terminate(_Reason, _StateName, State) -> 
+  Sender = State#state.sender,
+  stop_sender(Sender),
   ok.
 
 %% ----------------------------------------------------------------------------
@@ -305,7 +315,7 @@ dispatch_message(Request,Headers,Body,State) when is_record(Request,rtsp_request
   Handler  = fun() -> try 
                         Callback(Me, Request, Headers, Body)
                       catch
-                         Err -> send_server_error(Me, Err, Sequence)
+                        Err -> send_server_error(Me, Err, Sequence)
                       end
              end,
   erlang:spawn(Handler),

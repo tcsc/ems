@@ -8,7 +8,7 @@
 %% ============================================================================
 %% Type definitions
 %% ============================================================================
--type_export([svr/0]).
+-type svr() :: pid().
 
 -record(listener, { 
   address  :: inet:ip_address(),
@@ -22,7 +22,8 @@
                  auth_svr      :: rtsp_auth:svr(),
                  connections   :: [rtsp_connection:conn()]
                }).
--type rtsp_server_state() :: #state{}.
+-type state() :: #state{}.
+-type_export([svr/0]).
 
 %% ============================================================================
 %% gen_server callbacks
@@ -44,7 +45,7 @@
 %% @doc Starts the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec start_link() -> {ok, pid()} | {error, any()}.
+-spec start_link() -> {ok, svr()} | {error, any()}.
 start_link() ->
   ?LOG_DEBUG("rtsp_server:start_link/1", []),
 
@@ -65,8 +66,8 @@ start_link() ->
 %%      connection deadlock-safe.
 %% @end
 %% ----------------------------------------------------------------------------
--spec add_listener(inet:ip_addr(), integer(), rtsp:request_callback()) -> {ok, listener:listener() } | 
-                                                                          {error, any()}.
+-spec add_listener(inet:ip_address(), integer(), rtsp:request_callback()) -> 
+        {ok, listener:listener() } | {error, any()}.
 add_listener(Address, Port, Callback) ->
   ?LOG_DEBUG("rtsp_server:add_listener/3 - ~w:~w", [Address, Port]),
   gen_server:call(rtsp_server, {bind, Address, Port, Callback}).
@@ -81,8 +82,8 @@ add_listener(Address, Port, Callback) ->
 %% @private
 %% @end
 %% ----------------------------------------------------------------------------
--spec new_connection(inets:socket(), 
-                     inets:ip_addr(), 
+-spec new_connection(inet:socket(), 
+                     inet:ip_address(), 
                      rtsp:request_callback()) -> ok.
 new_connection(Socket, _Addr, RequestCallback) ->
   ?LOG_DEBUG("rtsp_server:new_connection/3 - spawning process to handle connection", []),
@@ -114,6 +115,7 @@ init(State) ->
 %% @private
 %% @end
 %% ----------------------------------------------------------------------------
+-spec handle_call(any(), pid(), state()) -> {reply, any(), state()}.
 handle_call({spawn_connection, Callback}, _From, State) ->
   ?LOG_DEBUG("rtsp_server:new_connection/1 - spawning connection handler", []),
   ServerString = State#state.server_string,
@@ -121,7 +123,7 @@ handle_call({spawn_connection, Callback}, _From, State) ->
     {ok, Pid} -> Cs = [ Pid | State#state.connections ],
                  StateP = State#state{ connections = Cs },
                  {reply, {ok,Pid}, StateP};
-    err -> {reply, error, State}
+    {error, _} -> {reply, error, State}
   end;
 
 handle_call({bind, Address, Port, Callback}, _From, State) ->
@@ -141,9 +143,6 @@ handle_call({bind, Address, Port, Callback}, _From, State) ->
            {reply, {error, Err}, State}
   end;
   
-handle_call({request, _Request, _Body}, _From, State) ->
-  {noreply, State};
-
 handle_call(_Request, _From, State) ->
   ?LOG_DEBUG("rtsp_server:handle_call/3 ~w",[_Request]),
   {noreply, State}.
@@ -151,14 +150,8 @@ handle_call(_Request, _From, State) ->
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen server in response to a cast (i.e. asynchronous)
 %%      request.
-%% @spec handle_cast(Request,From,State) -> {noreply,State}
 %% @end
 %% ----------------------------------------------------------------------------
-handle_cast({new_connection, Socket}, State) ->
-  ?LOG_DEBUG("rtsp_server:handle_cast/2 (new_request) on ~w",[Socket]),
-  rtsp_connection:start_link(Socket),
-  {noreply, State};
-
 handle_cast(_Request, State) ->
   ?LOG_DEBUG("rtsp_server:handle_cast/2 ~w",[_Request]),
   {noreply, State}.
@@ -183,13 +176,3 @@ terminate(Reason, _State) ->
 code_change(_OldVersion, State, _Extra) ->
   ?LOG_DEBUG("rtsp_server:code_change/3",[]),
   {ok, State}.
-
-%% ----------------------------------------------------------------------------
-%% @doc Generates a dictionary of the default set of headers for any given 
-%%      response.
-%% @spec default_headers(State) -> dictionary()
-%% @end
-%% ---------------------------------------------------------------------------- 
--spec default_headers(rtsp_server_state()) -> any(). 
-default_headers(_State = #state{server_string=Server}) ->
-  dict:append(?RTSP_HEADER_SERVER, Server, dict:new()).

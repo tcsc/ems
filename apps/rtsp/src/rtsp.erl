@@ -27,14 +27,15 @@
 %% ============================================================================
 %%
 %% ============================================================================
--type request_callback() :: fun((
-  rtsp_connection:conn(), 
-  rtsp:message(),
-  binary()) -> any()).
-  
 -type message() :: #rtsp_message{}.
+-type request() :: #rtsp_request{}.
+-type header() :: #rtsp_message_header{}.
+-type request_callback() :: fun((rtsp_connection:conn(), 
+                                 rtsp:request(),
+                                 rtsp:header(),
+                                 binary()) -> any()).
   
--export_type([message/0, request_callback/0]).
+-export_type([message/0, request/0, header/0, request_callback/0]).
 
 %% ============================================================================
 %% Definitions
@@ -52,17 +53,23 @@ start() ->
 start(normal,_) ->
   rtsp:start_link().
   
-stop(_) -> rtsp:stop().
+stop(_) -> 
+  Stop = fun({Id, _Pid, _, _}) ->
+    supervisor:terminate_child(rtsp_sup, Id),
+    supervisor:delete_child(rtsp_sup, Id)
+  end,
+  lists:foreach(Stop, supervisor:which_children(rtsp_sup)).
 
+-spec start_link() -> {ok, pid()} | {error, any()}.
 start_link() -> 
   case supervisor:start_link({local, rtsp_sup}, ?MODULE, []) of
     {ok, Pid} -> 
       ?LOG_DEBUG("rtsp:start_link/0 - RTSP supervisor started on ~w", [Pid]),
       {ok, Pid};
       
-    Err -> 
+    {error, Err} -> 
       ?LOG_ERROR("rtsp:start_link/0 - RTSP supervisor failed to start ~w", [Err]),
-      Err
+      {error, Err}
   end.
 
 %% ============================================================================
