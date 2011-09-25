@@ -141,23 +141,25 @@ with_authenticated_user_do(Conn, Request, Headers, PwdCallback, Action) ->
 %% @doc Parses a binary as an RTSP message. 
 %% @end
 %% ----------------------------------------------------------------------------
--spec parse_message(binary()) -> message().
+-spec parse_message(binary()) -> message() | bad_request.
 parse_message(Data) when is_binary(Data) ->
-  [FirstLine | Lines] = re:split(Data, <<"\r\n">>),
+  try
+    [FirstLine | Lines] = re:split(Data, <<"\r\n">>),
 
-  % look at the first line of the message, which will tell us if this is an 
-  % inbound request or response
-  {MessageType,Message} = parse_first_line(FirstLine),
+    % look at the first line of the message, which will tell us if this is an 
+    % inbound request or response
+    Message = parse_first_line(FirstLine),
 
-  % parse the common parts of the message, including headers, sequence,
-  % content length, etc.
-  Headers = parse_headers(Lines),
-  #rtsp_message{message = Message, headers = reify_headers(Headers)}.
+    % parse the common parts of the message, including headers, sequence,
+    % content length, etc.
+    Headers = parse_headers(Lines),
+    #rtsp_message{message = Message, headers = reify_headers(Headers)}
+  catch
+    _ -> bad_request
+  end.
 
 %% -----------------------------------------------------------------------------
 %% @doc 
-%% @spec get_header(Headers, Header) -> Header | undefined
-%%       Header = string()
 %% @end
 %% -----------------------------------------------------------------------------
 -spec get_header(header(), string()) -> [string()] | 'undefined'.
@@ -326,9 +328,10 @@ format_message(Message,Headers,Body) when is_record(Message,rtsp_response) ->
 %% -----------------------------------------------------------------------------
 %% @doc Parses the first line of an RTSP message and determines if the message
 %%      is a request or a response.
-%% @spec parse_first_line(Line) -> {request,Request} | {response,Response}
+%% @throws bad_request
 %% @end
 %% -----------------------------------------------------------------------------
+-spec parse_first_line(binary()) -> request | response.
 parse_first_line(Line) ->
   case Line of
     % The line starts with an RTSP version marker, so it looks like a 
@@ -341,10 +344,10 @@ parse_first_line(Line) ->
 
 %% -----------------------------------------------------------------------------
 %% @doc Parses an RTSP request line
-%% @spec parse_request_line(Data) -> {request,Request}
-%%       Request = is_record(rtsp_request) 
+%% @throws bad_request
 %% @end
 %% -----------------------------------------------------------------------------  
+-spec parse_request_line(binary()) -> request.
 parse_request_line(Data) ->
   {Method,EndOfMethod} = stringutils:extract_token(Data, 0, ?SP),
   {Uri,EndOfUri} = stringutils:extract_token(Data, EndOfMethod+1, ?SP),
@@ -353,24 +356,22 @@ parse_request_line(Data) ->
     <<_:StartOfVersion/binary, "RTSP/", VerMajor:8, ".", VerMinor:8>> ->
       % the line is a valid request line, so we build a valid request 
       % record and return it
-      Request = #rtsp_request{
+      #rtsp_request{
         method = Method,
         uri = Uri, 
         version = {
           list_to_integer([VerMajor]),
-          list_to_integer([VerMinor])} },
-      {request, Request};
+          list_to_integer([VerMinor])} };
 
     _ ->
       % oops - not a properly-formatted request line. Bail.
-      throw({error, bad_request})
+      throw(bad_request)
   end.
   
 %% -----------------------------------------------------------------------------
 %%
 %% -----------------------------------------------------------------------------  
-parse_response_line(_Data) ->
-  {response, {}}.
+parse_response_line(_Data) -> #rtsp_response{}.
 
 %% -----------------------------------------------------------------------------
 %% @doc Formats the first line of a response and returns it as a binary object 
@@ -637,28 +638,50 @@ translate_status(Status) ->
     service_unavailable   -> {503, "Service Unavailable"}
   end.
 
+%% ----------------------------------------------------------------------------
+%% @doc RTSP request recognizer
+%% @end
+%% ----------------------------------------------------------------------------
+-spec is_request(message()) -> boolean().
 is_request(Msg = #rtsp_message{message = Rq}) when is_record(Msg, rtsp_message) ->
   is_record(Rq, rtsp_request).
 
+%% ----------------------------------------------------------------------------
+%% @doc RTSP response recognizer
+%% @end
+%% ----------------------------------------------------------------------------
+-spec is_response(message()) -> boolean().
 is_response(Msg = #rtsp_message{message = Rs}) when is_record(Msg, rtsp_message) ->
   is_record(Rs, rtsp_response).
 
+%% ----------------------------------------------------------------------------
+%% @doc Extracts the content length from an RTSP message, regardless of the 
+%%      message type
+%% @end
+%% ----------------------------------------------------------------------------
 -spec message_content_length(message()) -> integer().
 message_content_length(#rtsp_message{headers = Hdrs}) -> 
   Hdrs#rtsp_message_header.content_length.
 
+%% ----------------------------------------------------------------------------
+%% @doc Extracts the content type from an rtsp message, regardless of the
+%%      message type.
+%% @end
+%% ----------------------------------------------------------------------------
 -spec message_content_type(message()) -> string().
 message_content_type(#rtsp_message{headers = Hdrs}) -> 
   Hdrs#rtsp_message_header.content_type.
-
 
 %% ----------------------------------------------------------------------------
 %% @doc Extracts some commonly-used bits out of an RTSP request and returns 
 %%      them to the caller.
 %% @end
 %% ----------------------------------------------------------------------------  
--spec get_request_info(message()) -> 
-        {string(), string(), integer(), integer(), string()}.
+-spec get_request_info(message()) -> {string(),  % method
+                                      string(),  % uri
+                                      integer(), % sequence
+                                      integer(), % content length
+                                      string()}. % content type
 get_request_info(#rtsp_message{message = Rq, headers = Hdrs}) when is_record(Rq, rtsp_request) ->
   M   = Rq#rtsp_request.method,
   Uri = Rq#rtsp_request.uri,

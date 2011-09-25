@@ -245,20 +245,22 @@ handle_data(Data, StateData, ready) ->
     {ok, Message, Remainder} ->             
       % attempt to parse the message and deal with it before going 
       % around again
-      RtspMsg = rtsp:parse_message(Message),
-      case rtsp:message_content_length(RtspMsg) of
-        % content length is zero, so we can just pass the message on to the server
-        % without further ado  
-        0 -> 
-          NewState = dispatch_message(RtspMsg, StateData),
-          {ok, ready, NewState, Remainder};
+      case rtsp:parse_message(Message) of
+        RtspMsg ->
+          case rtsp:message_content_length(RtspMsg) of
+            % content length is zero, so we can just pass the message on to the server
+            % without further ado  
+            0 -> 
+              NewState = dispatch_message(RtspMsg, StateData),
+              {ok, ready, NewState, Remainder};
           
-        % content length is nonzero, so we need to read the body data. Save the
-        % request into the connection state and go around again - but this time
-        % in the reading_body state.  
-        _ -> 
-          NewState = StateData#state{pending_message = RtspMsg},
-          handle_data(Remainder, NewState, reading_body)
+            % content length is nonzero, so we need to read the body data. Save the
+            % request into the connection state and go around again - but this time
+            % in the reading_body state.  
+            _ -> 
+              NewState = StateData#state{pending_message = RtspMsg},
+              handle_data(Remainder, NewState, reading_body)
+          end
       end;
       
     notfound ->
