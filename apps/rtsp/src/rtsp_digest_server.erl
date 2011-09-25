@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 -include("digest.hrl").
 
--export([start_link/0, get_auth_nonce/1]).
+-export([start_link/0, get_context/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, 
   code_change/3]).
@@ -14,7 +14,6 @@
 %% Types
 %% ============================================================================
 -type svr() :: pid().
--type nonce() :: integer().
 -type ctx() :: #digest_ctx{}.
 -export_types([ctx/0]).
 -opaque([svr/0]).
@@ -34,10 +33,10 @@ start_link() ->
 %%      for a connection 
 %% @end
 %% ----------------------------------------------------------------------------
--spec get_auth_nonce(rtsp_connection:conn()) -> nonce().
-get_auth_nonce(Conn) ->
+-spec get_context(rtsp_connection:conn()) -> ctx().
+get_context(Conn) ->
   {ok, Ctx} = gen_server:call(?SERVER_NAME, {get_context, Conn}),
-  Ctx#digest_ctx.nonce.
+  Ctx.
 
 %% ============================================================================
 %% gen_server callbacks
@@ -48,7 +47,15 @@ init(_) ->
   State = #state{db = dict:new(), timer = TRef},
   {ok, State}.
 
--spec handle_call(any(), rtsp_connection:conn(), state()) -> {reply, any(), state()}.
+%% ----------------------------------------------------------------------------
+%% @doc Handles synchronous calls from the public API
+%% @private
+%% @end
+%% ----------------------------------------------------------------------------
+
+-spec handle_call(any(), rtsp_connection:conn(), state()) -> 
+        {reply, any(), state()}.
+
 handle_call({get_context, Conn}, _, State) ->
   Db = State#state.db,
   {Ctx, DbP} = case dict:find(Conn, Db) of

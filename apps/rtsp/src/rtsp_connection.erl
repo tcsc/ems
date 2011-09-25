@@ -42,11 +42,12 @@
 -record(state, { server_str        :: string(),
                  socket            :: inet:socket(),
                  sender            :: pid(),
-                 pending_message,
-                 pending_requests,
+                 pending_message   :: rtsp:message(),
+                 pending_requests  :: dict(),
                  pending_data      :: binary(),
                  callback          :: rtsp:request_callback()
                }).
+-type state() :: #state{}.
 
 -define(SP,16#20).
 
@@ -102,13 +103,14 @@ handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, S
     [Sequence, Status]),
 
   StateP = case deregister_pending_request(Sequence, State) of 
-    {Rq, S} -> RtspVersion = Rq#rtsp_request.version,
-               AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
-               Response = #rtsp_response{status = Status, version = RtspVersion}, 
-               Bytes = rtsp:format_message(Response, AllHeaders, Body),
-               send_data(S, Bytes),
-               S;
-      _ -> State
+    {Msg, S} -> Rq = Msg#rtsp_message.message,
+                RtspVersion = Rq#rtsp_request.version,
+                AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
+                Response = #rtsp_response{status = Status, version = RtspVersion}, 
+                Bytes = rtsp:format_message(Response, AllHeaders, Body),
+                send_data(S, Bytes),
+                S;
+    _ -> State
   end,
   {next_state, StateName, StateP};
 
@@ -243,20 +245,19 @@ handle_data(Data, StateData, ready) ->
     {ok, Message, Remainder} ->             
       % attempt to parse the message and deal with it before going 
       % around again
-      {_MessageType, RtspMessage, Headers} = rtsp:parse_message(Message),
-      case Headers#rtsp_message_header.content_length of
+      RtspMsg = rtsp:parse_message(Message),
+      case rtsp:message_content_length(RtspMsg) of
         % content length is zero, so we can just pass the message on to the server
         % without further ado  
         0 -> 
-          NewState = dispatch_message(RtspMessage, Headers, << >>, StateData),
+          NewState = dispatch_message(RtspMsg, StateData),
           {ok, ready, NewState, Remainder};
           
         % content length is nonzero, so we need to read the body data. Save the
         % request into the connection state and go around again - but this time
         % in the reading_body state.  
         _ -> 
-          NewState = StateData#state{
-            pending_message={RtspMessage, Headers}},
+          NewState = StateData#state{pending_message = RtspMsg},
           handle_data(Remainder, NewState, reading_body)
       end;
       
@@ -267,8 +268,8 @@ handle_data(Data, StateData, ready) ->
   end;
 
 handle_data(Data, StateData, reading_body) ->
-  {Message,Header} = StateData#state.pending_message,
-  ContentLength = Header#rtsp_message_header.content_length,
+  Msg = StateData#state.pending_message,
+  ContentLength = rtsp:message_content_length(Msg),
   
   DataSize = size(Data),
   
@@ -282,8 +283,8 @@ handle_data(Data, StateData, reading_body) ->
           {Body, Remainder} = {Data, << >>}
       end,
 
-      NewState = dispatch_message(Message, Header, Body, 
-        StateData#state{pending_message = undefined}),
+      MsgP = Msg#rtsp_message{body = Body},
+      NewState = dispatch_message(MsgP, StateData#state{pending_message = undefined}),
       handle_data(Remainder, NewState, ready);
     
     true ->  {ok, reading_body, StateData, Data}
@@ -298,28 +299,31 @@ handle_data(Data, StateData, _State) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @spec dispatch_message(Message, Headers, Body, State) -> NewState
-%%       Message = Request | Response
-%%       Headers = rtsp_message_header()
+%% @doc
 %% @end
 %% ---------------------------------------------------------------------------- 
-dispatch_message(Request,Headers,Body,State) when is_record(Request,rtsp_request) ->
-  {Method, Uri, Sequence, _, _} = rtsp:get_request_info(Request, Headers),
+-spec dispatch_message(rtsp:message(), state()) -> state().
+dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
+
+  case element(1, Msg#rtsp_message.message) of
+    rtsp_request ->
+      {Method, Uri, Sequence, _, _} = rtsp:get_request_info(Msg),
     
-  ?LOG_DEBUG("rtsp_connection:dispatch_message/4 - handling #~w ~s ~s",
-    [Sequence,Method,Uri]),
+      ?LOG_DEBUG("rtsp_connection:dispatch_message/2 - handling #~w ~s ~s",
+        [Sequence,Method,Uri]),
   
-  StateP   = register_pending_request(Sequence, Request, State),
-  Me       = self(),
-  Callback = State#state.callback, 
-  Handler  = fun() -> try 
-                        Callback(Me, Request, Headers, Body)
-                      catch
-                        Err -> send_server_error(Me, Err, Sequence)
-                      end
-             end,
-  erlang:spawn(Handler),
-  StateP.
+      StateP   = register_pending_request(Sequence, Msg, State),
+      Me       = self(),
+      Callback = State#state.callback, 
+      Handler  = fun() -> try 
+                            Callback(Me, Msg)
+                          catch
+                            Err -> send_server_error(Me, Err, Sequence)
+                          end
+                 end,
+      erlang:spawn(Handler),
+      StateP
+  end.
   
 %% ----------------------------------------------------------------------------
 %% @doc Generates an RTSP response for a failure and forwards it to the
@@ -396,12 +400,13 @@ register_pending_request(Seq, Request, State) ->
   State#state{pending_requests = dict:append(Seq, Request, PendingRequests)}.
 
 %% ----------------------------------------------------------------------------
-%% @spec deregister_pending_request(Seq, State) -> Result
-%%         Seq = int()
-%%         State = state()
-%%         Result = NewState | {Request, NewState}
+%% @doc Removes a pending request from the list of requests awaiting an
+%%      outgoing response, returning a new state record and the dequeued
+%%      request
 %% @end
 %% ----------------------------------------------------------------------------
+-spec deregister_pending_request(integer(),state()) -> {rtsp:message(),state()} 
+                                                       | state().
 deregister_pending_request(Seq, State) ->
   PendingRequests = State#state.pending_requests,
   case dict:find(Seq, PendingRequests) of 

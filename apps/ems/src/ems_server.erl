@@ -52,11 +52,10 @@ configure_rtsp_server(Config) ->
             {ports, Ps} -> Ps;
             false -> [554]
           end,
-  Handler = fun(Conn, Request, Headers, Body) -> 
-              ems_rtsp_bridge:handle_request(Conn, Request, Headers, Body)
-            end,
   Bind = fun(P) -> 
-            rtsp_server:add_listener({0,0,0,0}, P, Handler)
+            rtsp_server:add_listener({0,0,0,0}, 
+                                     P, 
+                                     fun ems_rtsp_bridge:handle_request/2)
          end,
   lists:foreach(Bind, Ports).
 

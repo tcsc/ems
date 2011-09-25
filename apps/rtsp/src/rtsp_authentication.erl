@@ -40,10 +40,15 @@ get_user_name(AuthInfo) when is_record(AuthInfo, digest) ->
   AuthInfo#digest.user_name.
   
 -spec validate(rtsp_connection:conn(), 
-               rtsp:request(), 
+               rtsp:message(), 
                auth_info(), 
-               rtsp:user_info()) ->  'ok' | 'fail'.
-validate(_Conn, _Request, _AuthInfo, _UserInfo) -> fail.
+               rtsp:user_info()) ->  'ok' | 'fail' | 'stale'.
+
+validate(Conn, #rtsp_message{message = Rq}, AuthInfo, UserInfo) 
+    when is_record(Rq, rtsp_request),
+         is_record(AuthInfo, digest) -> 
+  Ctx = rtsp_digest_server:get_context(Conn),
+  authenticate_digest(Rq, AuthInfo, UserInfo, Ctx).
 
 %% ============================================================================
 %% Private API
@@ -100,7 +105,7 @@ parse_digest_element(_, D) -> D.
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
--spec authenticate_digest(rtsp:request(), 
+-spec authenticate_digest(rtsp:message(), 
                           #digest{}, 
                           rtsp:user_info(),
                           rtsp_digest_server:ctx()) -> ok | fail | stale.
@@ -108,7 +113,7 @@ authenticate_digest(
   _Request   = #rtsp_request{ method = Method }, 
   AuthInfo  = #digest{ user_name = UserName, realm = Realm, qop = QoP, 
                        uri = Uri, nonce = Nonce }, 
-  UserInfo  = #rtsp_user_info{ password = Pwd },
+  _UserInfo  = #rtsp_user_info{ password = Pwd },
   DigestCtx) ->
   
   A1 = string:join([UserName, Realm, Pwd], ":"),

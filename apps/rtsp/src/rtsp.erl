@@ -22,7 +22,11 @@
   translate_status/1,
   parse_transport/1,
   get_header/2, 
-  get_request_info/2,
+  get_request_info/1,
+  is_request/1,
+  is_response/1,
+  message_content_length/1,
+  message_content_type/1,
   with_authenticated_user_do/5]).
 
 %% ============================================================================
@@ -32,10 +36,7 @@
 -type request() :: #rtsp_request{}.
 -type header() :: #rtsp_message_header{}.
 -type user_info() :: #rtsp_user_info{}.
--type request_callback() :: fun((rtsp_connection:conn(), 
-                                 rtsp:request(),
-                                 rtsp:header(),
-                                 binary()) -> any()).
+-type request_callback() :: fun((rtsp_connection:conn(), message()) -> any()).
 
 -export_type([message/0, request/0, header/0, request_callback/0, user_info/0]).
 
@@ -101,6 +102,11 @@ init(_) ->
   },
   {ok, {{one_for_one, 10, 1}, [DigestServer, RtspServer]}}.
 
+
+%% ============================================================================
+%% Public API
+%% ============================================================================
+
 %% ----------------------------------------------------------------------------
 %% @doc Attempts to authenticate a request and executes an action if and only
 %%      if the athentication succeeds.  
@@ -133,14 +139,9 @@ with_authenticated_user_do(Conn, Request, Headers, PwdCallback, Action) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary as an RTSP message. 
-%% @spec parse_message(Data,State) -> Result
-%%       Result = {MessageType, Message, Headers} | error
-%%       MessageType = request | response
-%%       Message = Request | Response
-%%       Request = rtsp_request()
-%%       Response = rtsp_response()
 %% @end
 %% ----------------------------------------------------------------------------
+-spec parse_message(binary()) -> message().
 parse_message(Data) when is_binary(Data) ->
   [FirstLine | Lines] = re:split(Data, <<"\r\n">>),
 
@@ -151,7 +152,7 @@ parse_message(Data) when is_binary(Data) ->
   % parse the common parts of the message, including headers, sequence,
   % content length, etc.
   Headers = parse_headers(Lines),
-  {MessageType, Message, reify_headers(Headers)}.
+  #rtsp_message{message = Message, headers = reify_headers(Headers)}.
 
 %% -----------------------------------------------------------------------------
 %% @doc 
@@ -636,25 +637,33 @@ translate_status(Status) ->
     service_unavailable   -> {503, "Service Unavailable"}
   end.
 
+is_request(Msg = #rtsp_message{message = Rq}) when is_record(Msg, rtsp_message) ->
+  is_record(Rq, rtsp_request).
+
+is_response(Msg = #rtsp_message{message = Rs}) when is_record(Msg, rtsp_message) ->
+  is_record(Rs, rtsp_response).
+
+-spec message_content_length(message()) -> integer().
+message_content_length(#rtsp_message{headers = Hdrs}) -> 
+  Hdrs#rtsp_message_header.content_length.
+
+-spec message_content_type(message()) -> string().
+message_content_type(#rtsp_message{headers = Hdrs}) -> 
+  Hdrs#rtsp_message_header.content_type.
+
+
 %% ----------------------------------------------------------------------------
 %% @doc Extracts some commonly-used bits out of an RTSP request and returns 
 %%      them to the caller.
-%% @spec get_request_info(Request, Headers) -> Result
-%%         Request = rtsp_request()
-%%         Headers = rtsp_message_header()
-%%         Result = {Method, Uri, Sequence, ContentLength, ContentType}
-%%         Method = announce | options | setup | play | teardown | string()
-%%         Uri = string()
-%%         Sequence = int()
-%%         ContentLength = int()
-%%         ContentType = string()
 %% @end
 %% ----------------------------------------------------------------------------  
-get_request_info(Request, Headers) ->
-  Method = Request#rtsp_request.method,
-  Uri = Request#rtsp_request.uri,
-  Sequence = Headers#rtsp_message_header.sequence,
-  ContentLength = Headers#rtsp_message_header.content_length,
-  ContentType = Headers#rtsp_message_header.content_type,
-  {Method, Uri, Sequence, ContentLength, ContentType}.
+-spec get_request_info(message()) -> 
+        {string(), string(), integer(), integer(), string()}.
+get_request_info(#rtsp_message{message = Rq, headers = Hdrs}) when is_record(Rq, rtsp_request) ->
+  M   = Rq#rtsp_request.method,
+  Uri = Rq#rtsp_request.uri,
+  Seq = Hdrs#rtsp_message_header.sequence,
+  Cl  = Hdrs#rtsp_message_header.content_length,
+  Ct  = Hdrs#rtsp_message_header.content_type,
+  {M, Uri, Seq, Cl, Ct}.
   

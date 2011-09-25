@@ -1,9 +1,10 @@
 -module (ems_rtsp_bridge).
--export([handle_request/4]).
+-export([handle_request/2]).
 -include("rtsp.hrl").
 
-handle_request(Conn, Request, Headers, Body) ->
-	{Method, _Uri, Sequence, _, _} = rtsp:get_request_info(Request, Headers),
+-spec handle_request(rtsp_connection:conn(), rtsp:message()) -> any().
+handle_request(Conn, Request = #rtsp_message{headers = Headers, body = Body}) ->
+	{Method, _Uri, Sequence, _, _} = rtsp:get_request_info(Request),
   handle_request(Conn, Method, Sequence, Request, Headers, Body).
 
 %% ----------------------------------------------------------------------------
@@ -11,7 +12,7 @@ handle_request(Conn, Request, Headers, Body) ->
 %%       Method = options | accounce | setup | play | teardown
 %% @end
 %% ----------------------------------------------------------------------------  
-handle_request(Conn, options, Sequence, _, _, _) ->
+handle_request(Conn, "OPTIONS", Sequence, _, _, _) ->
   PublicOptions = [?RTSP_METHOD_ANNOUNCE,
                    ?RTSP_METHOD_DESCRIBE,
                    ?RTSP_METHOD_SETUP,
