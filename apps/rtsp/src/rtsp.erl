@@ -22,7 +22,8 @@
   translate_status/1,
   parse_transport/1,
   get_header/2, 
-  get_request_info/2]).
+  get_request_info/2,
+  with_authenticated_user_do/5]).
 
 %% ============================================================================
 %%
@@ -30,12 +31,18 @@
 -type message() :: #rtsp_message{}.
 -type request() :: #rtsp_request{}.
 -type header() :: #rtsp_message_header{}.
+-type user_info() :: #rtsp_user_info{}.
 -type request_callback() :: fun((rtsp_connection:conn(), 
                                  rtsp:request(),
                                  rtsp:header(),
                                  binary()) -> any()).
-  
--export_type([message/0, request/0, header/0, request_callback/0]).
+
+-export_type([message/0, request/0, header/0, request_callback/0, user_info/0]).
+
+                                 
+-type user_info_callback() :: fun((string()) -> false | {ok, user_info()}).
+-type authenticated_action() :: fun((user_info()) -> any()).
+-export_type([user_info_callback/0, authenticated_action/0]).
 
 %% ============================================================================
 %% Definitions
@@ -86,13 +93,43 @@ init(_) ->
   },
   DigestServer = {
     digest_server,
-    {rtsp_auth, start_link, []},
+    {rtsp_digest_server, start_link, []},
     permanent,
     brutal_kill,
     worker,
-    [rtsp_auth]
+    [rtsp_digest_server]
   },
   {ok, {{one_for_one, 10, 1}, [DigestServer, RtspServer]}}.
+
+%% ----------------------------------------------------------------------------
+%% @doc Attempts to authenticate a request and executes an action if and only
+%%      if the athentication succeeds.  
+%% @throws unauthorised | bad_request
+%% @end
+%% ----------------------------------------------------------------------------
+-spec with_authenticated_user_do(rtsp_connection:conn(),
+                                 request(),
+                                 header(),
+                                 user_info_callback(),
+                                 authenticated_action()) -> any().
+with_authenticated_user_do(Conn, Request, Headers, PwdCallback, Action) ->
+  case get_header(Headers, ?RTSP_HEADER_AUTHORISATION) of
+    undefined -> throw(unauthorised);  
+    [AuthHeader|_] -> 
+      AuthInfo = case rtsp_authentication:parse(AuthHeader) of
+                   {ok, I} -> I;
+                   _ -> throw(bad_request)
+                 end,
+      UserName = rtsp_authentication:get_user_name(AuthInfo),
+      case PwdCallback(UserName) of
+        false -> throw(unauthorised);
+        {ok, UserInfo} -> 
+          case rtsp_authentication:validate(Conn, Request, AuthInfo, UserInfo) of
+            ok -> Action(UserInfo);
+            fail -> throw(unauthorised)
+          end
+      end
+  end.
 
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary as an RTSP message. 
@@ -122,6 +159,7 @@ parse_message(Data) when is_binary(Data) ->
 %%       Header = string()
 %% @end
 %% -----------------------------------------------------------------------------
+-spec get_header(header(), string()) -> [string()] | 'undefined'.
 get_header(Headers, Header) when is_record(Headers, rtsp_message_header) ->
   case dict:find(Header, Headers#rtsp_message_header.headers) of
     {ok, [Value]} -> Value;
@@ -234,7 +272,7 @@ parse_int(Text) ->
 parse_number_list(Text) when is_list(Text) ->
   Numbers = string:tokens(Text, "-"),
   try
-    lists:map(fun(N) -> list_to_integer(N) end, Numbers)
+    lists:map(fun list_to_integer/1, Numbers)
   catch
     error:badarg -> throw({rtsp_error, bad_request})
   end.
@@ -315,7 +353,7 @@ parse_request_line(Data) ->
       % the line is a valid request line, so we build a valid request 
       % record and return it
       Request = #rtsp_request{
-        method = parse_method(Method),
+        method = Method,
         uri = Uri, 
         version = {
           list_to_integer([VerMajor]),
@@ -325,23 +363,6 @@ parse_request_line(Data) ->
     _ ->
       % oops - not a properly-formatted request line. Bail.
       throw({error, bad_request})
-  end.
-
-%% -----------------------------------------------------------------------------
-%% @spec parse_method(MethodName) -> Method | MethodName
-%%         Method = options | announce | describe | setup | play | teardown
-%% @end 
-%% -----------------------------------------------------------------------------
-parse_method(MethodName) ->
-  case MethodName of
-    "OPTIONS" -> options;
-    "ANNOUNCE" -> announce;
-    "DESCRIBE" -> describe;
-    "SETUP" -> setup;
-    "PLAY" -> play;    
-    "RECORD" -> record;
-    "TEARDOWN" -> teardown;
-    _ -> MethodName
   end.
   
 %% -----------------------------------------------------------------------------

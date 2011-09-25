@@ -4,8 +4,8 @@
 
 {"apps/rtsp/src/*",     [debug_info, 
                          {outdir, "apps/rtsp/ebin"},
-                         {i, "apps/rtsp/include"},  
-                         {i, "include"}]}.
+                         {i, "apps/rtsp/include"},
+						 {i, "include"} ]}.
 
 {"apps/ems/src/*",      [debug_info, 
 						 {outdir, "apps/ems/ebin"}, 

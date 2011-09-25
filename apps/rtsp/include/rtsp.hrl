@@ -2,12 +2,6 @@
 -define(RTSP_VERSION, {1,0}).
 
 %% ----------------------------------------------------------------------------
-%% @doc The encapsulation of a parsed RTSP message
-%% @end
-%% ----------------------------------------------------------------------------
--record(rtsp_message, {type, specific, headers, body}).
-
-%% ----------------------------------------------------------------------------
 %% @doc The common parts of an rtsp message
 %% ----------------------------------------------------------------------------
 -record(rtsp_message_header, {
@@ -29,6 +23,19 @@
   status, 
   version = {1,0}}).
 
+-record(rtsp_user_info, {
+  id :: integer(), 
+  username :: string(),
+  password :: string() }).
+  
+%% ----------------------------------------------------------------------------
+%% @doc The encapsulation of a parsed RTSP message
+%% @end
+%% ----------------------------------------------------------------------------
+-record(rtsp_message, { message :: #rtsp_request{} | #rtsp_response{}, 
+                        headers :: #rtsp_message_header{},
+                        body    :: binary()}).  
+
 %% ============================================================================
 %% RTSP constants
 %% ============================================================================
@@ -42,6 +49,7 @@
 -define(RTSP_METHOD_RECORD,   "RECORD").
 
 -define(RTSP_HEADER_SEQUENCE,       "CSeq").
+-define(RTSP_HEADER_AUTHORISATION,  "Authorization").
 -define(RTSP_HEADER_SERVER,         "Server").
 -define(RTSP_HEADER_CONTENT_LENGTH, "Content-Length").
 -define(RTSP_HEADER_CONTENT_TYPE,   "Content-Type").

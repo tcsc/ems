@@ -1,6 +1,7 @@
--module(rtsp_auth).
+-module(rtsp_digest_server).
 -author("Trent Clarke <trent.clarke@gmail.com>").
 -behaviour(gen_server).
+-include("digest.hrl").
 
 -export([start_link/0, get_auth_nonce/1]).
 
@@ -14,10 +15,8 @@
 %% ============================================================================
 -type svr() :: pid().
 -type nonce() :: integer().
--record(ctx, { nonce   :: nonce(), 
-               created :: calendar:t_now(),
-               touched :: calendar:t_now() }).
--type ctx() :: #ctx{}.
+-type ctx() :: #digest_ctx{}.
+-export_types([ctx/0]).
 -opaque([svr/0]).
 
 -record(state, {db :: dict(), timer :: timer:tref()}).
@@ -38,7 +37,7 @@ start_link() ->
 -spec get_auth_nonce(rtsp_connection:conn()) -> nonce().
 get_auth_nonce(Conn) ->
   {ok, Ctx} = gen_server:call(?SERVER_NAME, {get_context, Conn}),
-  Ctx#ctx.nonce.
+  Ctx#digest_ctx.nonce.
 
 %% ============================================================================
 %% gen_server callbacks
@@ -54,7 +53,7 @@ handle_call({get_context, Conn}, _, State) ->
   Db = State#state.db,
   {Ctx, DbP} = case dict:find(Conn, Db) of
                  {ok, C} -> 
-                   {C, dict:update(Conn, fun(X) -> touch(X) end, Db)};
+                   {C, dict:update(Conn, fun touch/1, Db)};
                    
                  error -> 
                    C = new_context(),
@@ -88,9 +87,9 @@ code_change(_, State, _) ->
 new_context() -> 
   Now = erlang:now(),
   Nonce = make_nonce(16),
-  #ctx{nonce = Nonce, created = Now, touched = Now}.
+  #digest_ctx{nonce = Nonce, created = Now, touched = Now}.
 
-touch(Ctx) -> Ctx#ctx{touched = erlang:now()}.
+touch(Ctx) -> Ctx#digest_ctx{touched = erlang:now()}.
 
 make_nonce(Size) ->
   F = fun(_,{P,N}) -> X = random:uniform(255),
