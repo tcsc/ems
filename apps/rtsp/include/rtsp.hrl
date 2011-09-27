@@ -49,6 +49,7 @@
 -define(RTSP_METHOD_RECORD,   "RECORD").
 
 -define(RTSP_HEADER_SEQUENCE,       "CSeq").
+-define(RTSP_HEADER_AUTHENTICATE,   "WWW-Authenticate").
 -define(RTSP_HEADER_AUTHORISATION,  "Authorization").
 -define(RTSP_HEADER_SERVER,         "Server").
 -define(RTSP_HEADER_CONTENT_LENGTH, "Content-Length").

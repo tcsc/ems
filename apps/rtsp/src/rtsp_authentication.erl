@@ -5,7 +5,7 @@
 -include("../include/rtsp.hrl").
 -include("../include/digest.hrl").
 
--export([parse/1, get_user_name/1, validate/4]).
+-export([parse/1, get_user_name/1, validate/4, get_headers/3]).
 
 -compile(export_all).
 
@@ -49,6 +49,12 @@ validate(Conn, #rtsp_message{message = Rq}, AuthInfo, UserInfo)
          is_record(AuthInfo, digest) -> 
   Ctx = rtsp_digest_server:get_context(Conn),
   authenticate_digest(Rq, AuthInfo, UserInfo, Ctx).
+  
+-spec get_headers(rtsp:conn(), string(), [rstp:auth_flags()]) -> 
+        [{string(), string()}].
+get_headers(Conn, Realm, Flags) -> [
+    {?RTSP_HEADER_AUTHENTICATE, get_digest_header(Conn, Realm, [Flags])}
+  ].
 
 %% ============================================================================
 %% Private API
@@ -58,6 +64,21 @@ parse_basic(_Elements) -> #basic{}.
 %% ============================================================================
 %% Digest Authentication
 %% ============================================================================
+
+-spec get_digest_header(rtsp:conn(), string(), [rtsp:auth_flags()]) -> string().
+get_digest_header(Conn, Realm, Flags) ->
+  Ctx      = rtsp_digest_server:get_context(Conn),
+  Nonce    = Ctx#digest_ctx.nonce,
+  Opaque   = Ctx#digest_ctx.opaque,
+  Elements = lists:map(
+              fun({N,V}) -> N ++ "=" ++ V end,
+              [ {"realm",  Realm},
+                {"nonce",  quote(Nonce)}, 
+                {"opaque", quote(Opaque)},
+                {"qop",    "auth"},
+                {"stale",  atom_to_list(lists:member(stale, Flags))} ] ),
+                
+  "Digest " ++ string:join(Elements, ",").
 
 -spec parse_digest([string()]) -> {ok, #digest{}} | {error, bad_header}.
 parse_digest(Elements) ->
@@ -91,8 +112,10 @@ parse_digest_element({"nonce",    V}, D) -> D#digest{nonce        = V};
 parse_digest_element({"uri",      V}, D) -> D#digest{uri          = V};
 parse_digest_element({"cnonce",   V}, D) -> D#digest{client_nonce = V};
 parse_digest_element({"nc",       V}, D) -> D#digest{nonce_count  = V};
-parse_digest_element({"response", V}, D) -> D#digest{response     = V};
 parse_digest_element({"opaque",   V}, D) -> D#digest{opaque       = V};
+
+parse_digest_element({"response", V}, D) -> 
+  D#digest{response = string:tolower(V)};
 
 parse_digest_element({"qop", V}, D) -> 
   case V of 
@@ -100,10 +123,14 @@ parse_digest_element({"qop", V}, D) ->
     "auth-int" -> D#digest{qop = auth_int};
     _ -> throw(bad_header)
   end;
+  
 parse_digest_element(_, D) -> D.
 
 %% ----------------------------------------------------------------------------
-%%
+%% @doc Validates a digest response by computing the "expected" value and
+%%      returned by the comparing it to the one returned by the client
+%% @provate
+%% @end
 %% ----------------------------------------------------------------------------
 -spec authenticate_digest(rtsp:request(), 
                           #digest{}, 
@@ -136,8 +163,8 @@ authenticate_digest(
               true -> ok;
               false -> stale
             end
-  end.    
-
+  end.
+  
 %% ============================================================================
 %% Utilities
 %% ============================================================================  
@@ -149,7 +176,9 @@ hex_string(<<X:128/big-unsigned-integer>>) -> lists:flatten(io_lib:format("~32.1
 
 -spec hex_char(integer()) -> integer(). 
 hex_char(N) when (N < 10) -> $0 + N;
-hex_char(N) -> $a + (N - 10).  
+hex_char(N) -> $a + (N - 10).
+
+quote(S) -> "\"" ++ S ++ "\"".
   
 %% ============================================================================
 %% Unit tests

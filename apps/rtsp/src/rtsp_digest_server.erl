@@ -1,6 +1,7 @@
 -module(rtsp_digest_server).
 -author("Trent Clarke <trent.clarke@gmail.com>").
 -behaviour(gen_server).
+-include("logging.hrl").
 -include("digest.hrl").
 
 -export([start_link/0, get_context/1]).
@@ -18,7 +19,11 @@
 -export_type([svr/0, ctx/0]).
 -opaque([svr/0]).
 
--record(state, {db :: dict(), timer :: timer:tref()}).
+-record(state, { db               :: dict(), 
+                 poll_interval_ms :: integer(),
+                 age_cutoff_us    :: integer(), 
+                 idle_cutoff_us   :: integer(),
+                 timer            :: reference() }).
 -type state() :: #state{}.
 
 %% ============================================================================
@@ -35,16 +40,21 @@ start_link() ->
 %% ----------------------------------------------------------------------------
 -spec get_context(rtsp:conn()) -> ctx().
 get_context(Conn) ->
-  {ok, Ctx} = gen_server:call(?SERVER_NAME, {get_context, Conn}),
-  Ctx.
+  gen_server:call(?SERVER_NAME, {get_context, Conn}).
 
 %% ============================================================================
 %% gen_server callbacks
 %% ============================================================================
 
 init(_) ->
-  {ok, TRef} = queue_timer(),
-  State = #state{db = dict:new(), timer = TRef},
+  ?LOG_DEBUG("rtsp_digest_server:init/1: Starting", []),
+  TimerInterval = 30000,
+  TRef = queue_timer(TimerInterval),
+  State = #state{db = dict:new(), 
+                 poll_interval_ms = TimerInterval, 
+                 age_cutoff_us    = timer:seconds(60),
+                 idle_cutoff_us   = timer:seconds(10),
+                 timer = TRef},
   {ok, State}.
 
 %% ----------------------------------------------------------------------------
@@ -59,12 +69,9 @@ init(_) ->
 handle_call({get_context, Conn}, _, State) ->
   Db = State#state.db,
   {Ctx, DbP} = case dict:find(Conn, Db) of
-                 {ok, C} -> 
-                   {C, dict:update(Conn, fun touch/1, Db)};
-                   
-                 error -> 
-                   C = new_context(),
-                   {C, dict:store(Conn, C, Db)}
+                 {ok, C} -> {C, dict:update(Conn, fun touch/1, Db)};
+                 error ->  C = new_context(),
+                           {C, dict:store(Conn, C, Db)}
                end,
   StateP = State#state{db = DbP},
   {reply, Ctx, StateP};
@@ -75,9 +82,20 @@ handle_call(_,_,State) ->
 handle_cast(_, State) -> 
   {noreply, State}.
   
-handle_info(cull_expired, State) -> 
-  {ok, TRef} = queue_timer(),
-  StateP = State#state{timer = TRef},
+handle_info(cull_expired, State = #state{db = Db,
+                                         poll_interval_ms = Interval,
+                                         age_cutoff_us    = AgeCutoff, 
+                                         idle_cutoff_us   = IdleCutoff}) -> 
+  Now = erlang:now(),
+  Filter = 
+    fun(_,#digest_ctx{created = Created, touched = Touched}) ->
+      (timer:now_diff(Now, Created) > AgeCutoff) orelse 
+        (timer:now_diff(Now, Touched) > IdleCutoff)
+    end,
+    
+  DbP    = dict:filter(Filter, Db),
+  TRef   = queue_timer(Interval),
+  StateP = State#state{db = DbP, timer = TRef},
   {noreply, StateP}.
   
 terminate(_Reason, State) ->
@@ -92,11 +110,15 @@ code_change(_, State, _) ->
 %% ============================================================================
 -spec new_context() -> ctx().
 new_context() -> 
-  Now = erlang:now(),
-  Nonce = make_nonce(16),
-  #digest_ctx{nonce = Nonce, created = Now, touched = Now}.
+  Now    = erlang:now(),
+  Nonce  = make_nonce(8),
+  Opaque = make_nonce(16),
+  #digest_ctx{nonce = Nonce,
+              opaque = Opaque, 
+              created = Now, 
+              touched = Now }.
 
-touch(Ctx) -> Ctx#digest_ctx{touched = erlang:now()}.
+touch(Ctx) -> Ctx#digest_ctx{touched = erlang:now()}.  
 
 -spec make_nonce(integer()) -> string().
 make_nonce(Size) ->
@@ -106,5 +128,5 @@ make_nonce(Size) ->
   {_,N} = lists:foldl(F, {0,0}, lists:seq(1,Size)),
   lists:flatten(io_lib:format([$~] ++ (integer_to_list(Size*2)) ++ ".16.0b", [N])).
 
-queue_timer() -> 
-  timer:send_after(timer:seconds(30), cull_expired).
+queue_timer(Interval) -> 
+  erlang:send_after(Interval, self(), cull_expired).

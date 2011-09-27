@@ -358,9 +358,9 @@ send_server_error(Pid, Reason, Sequence) ->
 %% ----------------------------------------------------------------------------
 send_auth_response(Conn, Seq) ->  send_auth_response(Conn, Seq, []).
 
-send_auth_response(Conn, Seq, _Flags) -> 
-  send_response(Conn, Seq, unauthorized, [], << >>).
-
+send_auth_response(Conn, Seq, Flags) ->
+  Headers = rtsp_authentication:get_headers(Conn, "rtsp-server", Flags),
+  send_response(Conn, Seq, unauthorized, Headers, << >>).
 
 %% ----------------------------------------------------------------------------
 %% @spec build_response_headers(Sequence, ContentLength, Headers) -> Result
