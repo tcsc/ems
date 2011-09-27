@@ -20,7 +20,7 @@
 -record(state, { server_string :: string(),
                  listeners     :: [listener()],
                  auth_svr      :: rtsp_auth:svr(),
-                 connections   :: [rtsp_connection:conn()]
+                 connections   :: [rtsp:conn()]
                }).
 -type state() :: #state{}.
 -type_export([svr/0]).

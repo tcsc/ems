@@ -53,12 +53,11 @@ init(ConfigHandle) ->
 	MaxTimeBetweenRestarts = 3600,
 	
 	SupervisorFlags = {RestartStrategy, MaxRestarts, MaxTimeBetweenRestarts},
-	Config = ems_config:get_config(ConfigHandle),
-	
+
 	ChildSpec = 
 	[	
 		{ems_server,
-			{ems_server, start_link, [Config]},
+			{ems_server, start_link, [ConfigHandle]},
 			permanent,
 			2000,
 			worker,

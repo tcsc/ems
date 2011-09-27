@@ -1,18 +1,18 @@
 -module (ems_rtsp_bridge).
--export([handle_request/2]).
+-export([handle_request/3]).
 -include("rtsp.hrl").
 
--spec handle_request(rtsp_connection:conn(), rtsp:message()) -> any().
-handle_request(Conn, Request = #rtsp_message{headers = Headers, body = Body}) ->
-	{Method, _Uri, Sequence, _, _} = rtsp:get_request_info(Request),
-  handle_request(Conn, Method, Sequence, Request, Headers, Body).
+-spec handle_request(ems_config:handle(), rtsp:conn(), rtsp:message()) -> any().
+handle_request(Config, Conn, Msg) ->
+	{Method, Uri, Sequence, _, _} = rtsp:get_request_info(Msg),
+  handle_request(Config, Conn, Sequence, Method, Uri, Msg).
 
 %% ----------------------------------------------------------------------------
 %% @spec handle_request(Method, Request,Headers,Body,State) -> Result
 %%       Method = options | accounce | setup | play | teardown
 %% @end
 %% ----------------------------------------------------------------------------  
-handle_request(Conn, "OPTIONS", Sequence, _, _, _) ->
+handle_request(_, Conn, Seq, "OPTIONS", _, _) ->
   PublicOptions = [?RTSP_METHOD_ANNOUNCE,
                    ?RTSP_METHOD_DESCRIBE,
                    ?RTSP_METHOD_SETUP,
@@ -21,14 +21,31 @@ handle_request(Conn, "OPTIONS", Sequence, _, _, _) ->
                    ?RTSP_METHOD_TEARDOWN,
                    ?RTSP_METHOD_RECORD],
   Headers = [{"Public", string:join(PublicOptions, ", ")}],
-  rtsp_connection:send_response(Conn, Sequence, ok, Headers, << >>);
+  rtsp:send_response(Conn, Seq, ok, Headers, << >>);
 
-%handle_request(Conn, describe, Request, Headers, Body) -> 
+handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg = #rtsp_message{message = Rq}) ->
+  LookupUser = fun(UserName) -> get_user_info(Config, UserName) end,
+  
+  Handler = 
+    fun(UserInfo) ->
+      rtsp:send_response(Conn, Seq, internal_server_error, [], << >>)
+    end,
+    
+  rtsp:with_authenticated_user_do(Conn, Msg, LookupUser, Handler);
+  
 %	Uri = Request#rtsp_request.uri,
 %	{_,_,_,Path} = url:parse(Uri),
 %	Config = get_config_handle(Conn),
 %	MountPoint = case ems_config:get_mount_point(Config, Path) of 
 
-handle_request(Conn, _Method, Sequence, _Request, _Headers, _Body) ->
-  rtsp_connection:send_response(Conn, Sequence, not_implemented, [], << >>).
+handle_request(_, Conn, Seq, _Method, _, _) ->
+  rtsp:send_response(Conn, Seq, not_implemented, [], << >>).
 
+%% -----------------------------------------------------------------------------
+%% -----------------------------------------------------------------------------
+
+get_user_info(Config, UserName) ->
+  case ems_config:get_user_name(Config, UserName) of
+    false -> false;
+    User -> {ok, User}
+  end.

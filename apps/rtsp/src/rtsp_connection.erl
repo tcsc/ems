@@ -7,7 +7,8 @@
 %% ============================================================================
 %% Public API
 %% ============================================================================
--export([new/3, close/1, take_socket/2, get_client_address/1, send_response/5]).
+-export([new/3, close/1, take_socket/2, get_client_address/1, send_response/5, 
+        with_authenticated_user_do/4]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -36,8 +37,6 @@
 %% @doc The state record for an RTSP connection.
 %% @end
 %% ----------------------------------------------------------------------------
--type conn() :: pid().
--opaque([conn/0]).
 
 -record(state, { server_str        :: string(),
                  socket            :: inet:socket(),
@@ -59,8 +58,8 @@
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
--spec new(rtsp_server:svr(), string(), rtsp:request_callback()) -> {'ok', conn()} | 
-                                                                   {'error', any()}.
+-spec new(rtsp_server:svr(), string(), rtsp:request_callback()) -> 
+  {'ok', rtsp:conn()} | {'error', any()}.
 new(_Owner, ServerStr, Callback) -> 
   ?LOG_DEBUG("rtsp_connection:new/1", []),
   State = #state{ server_str       = ServerStr,
@@ -184,7 +183,7 @@ code_change(_OldVsn, StateName, StateData, _Extra) ->
 %%      sending 
 %% @end
 %% ----------------------------------------------------------------------------
--spec send_response(conn(), integer(), any(), [any()], binary()) -> any().
+-spec send_response(rtsp:conn(), integer(), any(), [any()], binary()) -> any().
 send_response(Conn, Sequence, Status, ExtraHeaders, Body) -> 
   Event = {send_response, Sequence, Status, ExtraHeaders, Body},
   gen_fsm:send_all_state_event(Conn, Event).
@@ -309,20 +308,25 @@ dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
 
   case element(1, Msg#rtsp_message.message) of
     rtsp_request ->
-      {Method, Uri, Sequence, _, _} = rtsp:get_request_info(Msg),
+      {Method, Uri, Seq, _, _} = rtsp:get_request_info(Msg),
     
       ?LOG_DEBUG("rtsp_connection:dispatch_message/2 - handling #~w ~s ~s",
-        [Sequence,Method,Uri]),
+        [Seq,Method,Uri]),
   
-      StateP   = register_pending_request(Sequence, Msg, State),
+      StateP   = register_pending_request(Seq, Msg, State),
       Me       = self(),
       Callback = State#state.callback, 
-      Handler  = fun() -> try 
-                            Callback(Me, Msg)
-                          catch
-                            Err -> send_server_error(Me, Err, Sequence)
-                          end
-                 end,
+      Handler  =
+        fun() -> 
+          try 
+            Callback(Me, Msg)
+          catch
+            {unauthorized, stale} -> send_auth_response(Me, Seq, [stale]);
+            {unauthorized, _} -> send_auth_response(Me, Seq);
+            bad_request  -> send_response(Me, Seq, bad_request, [], << >>);
+            Err -> send_server_error(Me, Err, Seq)
+          end
+        end,
       erlang:spawn(Handler),
       StateP
   end.
@@ -346,6 +350,17 @@ send_server_error(Pid, Reason, Sequence) when is_list(Reason) ->
 send_server_error(Pid, Reason, Sequence) ->
   send_response(Pid, Sequence, Reason, [], << >>),
   ok.
+
+%% ----------------------------------------------------------------------------
+%% @doc Generates and sends an RTSP 401-unauthorized response and sends it back
+%%      to the client.
+%% @end
+%% ----------------------------------------------------------------------------
+send_auth_response(Conn, Seq) ->  send_auth_response(Conn, Seq, []).
+
+send_auth_response(Conn, Seq, _Flags) -> 
+  send_response(Conn, Seq, unauthorized, [], << >>).
+
 
 %% ----------------------------------------------------------------------------
 %% @spec build_response_headers(Sequence, ContentLength, Headers) -> Result
@@ -383,8 +398,6 @@ build_response_headers(Sequence, ContentLength, Headers) ->
     content_type = ContentType, 
     headers = ServerHeader
   }.  
-
-%%with_authenticated_user_do() ->
   
 %% ============================================================================
 %% Utilility functions
@@ -417,6 +430,38 @@ deregister_pending_request(Seq, State) ->
       {Request, State#state{ pending_requests=NewDict }};
       
     _ -> State
+  end.
+
+%% ----------------------------------------------------------------------------
+%% @doc Attempts to authenticate a request and executes an action if and only
+%%      if the athentication succeeds.
+%% @throws bad_request | unauthorized | stale
+%% @end
+%% ----------------------------------------------------------------------------
+-spec with_authenticated_user_do(rtsp:conn(),
+                                 rtsp:message(),
+                                 rtsp:user_info_callback(),
+                                 rtsp:authenticated_action()) -> 
+                                 'ok' | no_return().
+with_authenticated_user_do(Conn, Request, PwdCallback, Action) ->
+  case rtsp:get_message_header(Request, ?RTSP_HEADER_AUTHORISATION) of
+    undefined -> throw({unauthorized, missing_header});  
+
+    [AuthHeader|_] -> 
+      AuthInfo = case rtsp_authentication:parse(AuthHeader) of
+                   {ok, I} -> I;
+                   _ -> throw(bad_request)
+                 end,
+      UserName = rtsp_authentication:get_user_name(AuthInfo),
+      case PwdCallback(UserName) of
+        false -> throw({unauthorized, no_such_user});
+        {ok, UserInfo} -> 
+          case rtsp_authentication:validate(Conn, Request, AuthInfo, UserInfo) of
+            ok -> Action(UserInfo), ok;
+            fail -> throw({unauthorized, auth_failed});
+            stale -> throw({unauthorized, stale})
+          end
+      end
   end.
 
 %% ============================================================================

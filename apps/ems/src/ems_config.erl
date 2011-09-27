@@ -3,7 +3,7 @@
 -include("config.hrl").
 
 %% Client-facing exports
--export([load/1, get_config/1, get_mount_point/2]).
+-export([load/1, get_config/1, get_mount_point/2, get_user_info/2]).
 
 %% ============================================================================
 %%
@@ -37,7 +37,7 @@ load(Path) ->
 				                   true -> ok
 				                 end
 					   end, 
-					   [{init,0}, {get_config,1}, {get_mount_point,2}]),
+					   [{init,0}, {get_config,1}, {get_mount_point,2}, {get_user,2}]),
 		
 		?LOG_DEBUG("config:load/1 - Running configuration initialiser...", []),
 		case Module:init() of
@@ -73,5 +73,9 @@ log_line_error(File, Line, Module, Desc) ->
 -spec get_config(handle()) -> ems_config().
 get_config({Cookie,Module}) -> Module:get_config(Cookie).
 
--spec get_mount_point(handle(), string()) -> mount_point().
+-spec get_mount_point(handle(), string()) -> 'false' | mount_point().
 get_mount_point({Cookie, Module}, Name) -> Module:get_mount_point(Cookie, Name).
+
+-spec get_user_info(handle(), string()) -> 'false' | user_info().
+get_user_info({Cookie, Module}, Name) ->
+  Module:get_user(Cookie, Name).

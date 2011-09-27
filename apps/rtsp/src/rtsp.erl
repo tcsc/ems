@@ -5,41 +5,49 @@
 -include("logging.hrl").
 
 %% ============================================================================
-%% Behaviour exports
+%% Exports
 %% ============================================================================
--export([start/2, stop/1, init/1]).
 
-%% ============================================================================
-%% Public API
-%% ============================================================================
+% application callbacks
+-export([start/2, stop/1]).
+
+% supervisor callbacks
+-export([init/1]).
+
+% public API
 -export([
+  add_listener/3,
   start/0,
   start_link/0,
   parse_message/1,
   format_message/3,
   format_transport/1,
   find_eom/1,
-  translate_status/1,
   parse_transport/1,
-  get_header/2, 
+  get_header/2,
+  get_message_header/2,
   get_request_info/1,
   is_request/1,
   is_response/1,
   message_content_length/1,
   message_content_type/1,
-  with_authenticated_user_do/5]).
+  send_response/5,
+  translate_status/1,
+  with_authenticated_user_do/4]).
 
 %% ============================================================================
 %%
 %% ============================================================================
 -type message() :: #rtsp_message{}.
 -type request() :: #rtsp_request{}.
+-type response() :: #rtsp_response{}.
 -type header() :: #rtsp_message_header{}.
 -type user_info() :: #rtsp_user_info{}.
--type request_callback() :: fun((rtsp_connection:conn(), message()) -> any()).
+-type conn() :: pid().
+-type request_callback() :: fun((conn(), message()) -> any()).
 
 -export_type([message/0, request/0, header/0, request_callback/0, user_info/0]).
-
+-opaque([conn/0]).
                                  
 -type user_info_callback() :: fun((string()) -> false | {ok, user_info()}).
 -type authenticated_action() :: fun((user_info()) -> any()).
@@ -55,12 +63,24 @@
 %% Application callbacks
 %% ============================================================================
 start() ->
+  ?LOG_INFO("rtsp:start/1 - Starting RTSP Server application", []),
   application:start(listener),
   application:start(rtsp).
   
+%% @doc Called by the application framework to start the RTSP server 
+%%      application.
+%% @private
+%% @end
 start(normal,_) ->
   rtsp:start_link().
-  
+
+%% @doc Called by the application framework to stop the RTSP server 
+%%      application. Explicitly kills the supervisor's children and 
+%%      removes their specifications from the supervisor's child 
+%%      list.
+%% @todo Work out what to do about the supervisor itself.
+%% @private
+%% @end  
 stop(_) -> 
   Stop = fun({Id, _Pid, _, _}) ->
     supervisor:terminate_child(rtsp_sup, Id),
@@ -68,6 +88,10 @@ stop(_) ->
   end,
   lists:foreach(Stop, supervisor:which_children(rtsp_sup)).
 
+%% @doc Called by the appliction entry point to start the RTSP supervisor 
+%%      process
+%% @private
+%% @end
 -spec start_link() -> {ok, pid()} | {error, any()}.
 start_link() -> 
   case supervisor:start_link({local, rtsp_sup}, ?MODULE, []) of
@@ -83,6 +107,10 @@ start_link() ->
 %% ============================================================================
 %% Supervisor callbacks
 %% ============================================================================
+
+%% @doc Returns a child spec list for the supervisor process to use.
+%% @private
+%% @end
 init(_) -> 
   RtspServer = {
     rtsp_server,
@@ -107,36 +135,30 @@ init(_) ->
 %% Public API
 %% ============================================================================
 
+-spec send_response(conn(), integer(), any(), [any()], binary()) -> any().
+send_response(Conn, Seq, Status, Headers, Body) -> 
+  rtsp_connection:send_response(Conn, Seq, Status, Headers, Body).
+
+-spec add_listener(inet:ip_address(), integer(), request_callback()) -> 
+          {ok, listener:listener() } | {error, any()}.
+add_listener(Address, Port, Callback) ->
+  rtsp_server:add_listener(Address, Port, Callback).
+
+
 %% ----------------------------------------------------------------------------
 %% @doc Attempts to authenticate a request and executes an action if and only
-%%      if the athentication succeeds.  
-%% @throws unauthorised | bad_request
+%%      if the athentication succeeds.
+%% @throws bad_request | unauthorized | stale
 %% @end
 %% ----------------------------------------------------------------------------
--spec with_authenticated_user_do(rtsp_connection:conn(),
-                                 request(),
-                                 header(),
+-spec with_authenticated_user_do(conn(),
+                                 message(),
                                  user_info_callback(),
-                                 authenticated_action()) -> any().
-with_authenticated_user_do(Conn, Request, Headers, PwdCallback, Action) ->
-  case get_header(Headers, ?RTSP_HEADER_AUTHORISATION) of
-    undefined -> throw(unauthorised);  
-    [AuthHeader|_] -> 
-      AuthInfo = case rtsp_authentication:parse(AuthHeader) of
-                   {ok, I} -> I;
-                   _ -> throw(bad_request)
-                 end,
-      UserName = rtsp_authentication:get_user_name(AuthInfo),
-      case PwdCallback(UserName) of
-        false -> throw(unauthorised);
-        {ok, UserInfo} -> 
-          case rtsp_authentication:validate(Conn, Request, AuthInfo, UserInfo) of
-            ok -> Action(UserInfo);
-            fail -> throw(unauthorised)
-          end
-      end
-  end.
-
+                                 authenticated_action()) -> 
+                                 'ok' | no_return().
+with_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
+  rtsp_connection:with_authenticated_user_do(Conn, Rq, PwdCb, Action).
+  
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary as an RTSP message. 
 %% @end
@@ -158,6 +180,14 @@ parse_message(Data) when is_binary(Data) ->
     _ -> bad_request
   end.
 
+%% -----------------------------------------------------------------------------
+%% @doc
+%% @end 
+%% -----------------------------------------------------------------------------
+-spec get_message_header(message(), string()) -> [string()] | 'undefined'.
+get_message_header(Msg, Name) when is_record(Msg, rtsp_message) ->
+  get_header(Msg#rtsp_message.headers, Name).
+  
 %% -----------------------------------------------------------------------------
 %% @doc 
 %% @end
@@ -331,7 +361,7 @@ format_message(Message,Headers,Body) when is_record(Message,rtsp_response) ->
 %% @throws bad_request
 %% @end
 %% -----------------------------------------------------------------------------
--spec parse_first_line(binary()) -> request | response.
+-spec parse_first_line(binary()) -> request() | response().
 parse_first_line(Line) ->
   case Line of
     % The line starts with an RTSP version marker, so it looks like a 
@@ -347,7 +377,7 @@ parse_first_line(Line) ->
 %% @throws bad_request
 %% @end
 %% -----------------------------------------------------------------------------  
--spec parse_request_line(binary()) -> request.
+-spec parse_request_line(binary()) -> request().
 parse_request_line(Data) ->
   {Method,EndOfMethod} = stringutils:extract_token(Data, 0, ?SP),
   {Uri,EndOfUri} = stringutils:extract_token(Data, EndOfMethod+1, ?SP),
@@ -628,6 +658,7 @@ translate_status(Status) ->
   case Status of
     ok                    -> {200, "OK"};
     bad_request           -> {400, "Bad Request"};
+    unauthorized          -> {401, "Unauthorized"};
     not_found             -> {404, "Not Found"};
     length_required       -> {411, "Length Required"};
     session_not_found     -> {454, "Session Not Found"};

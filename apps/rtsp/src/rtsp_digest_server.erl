@@ -33,7 +33,7 @@ start_link() ->
 %%      for a connection 
 %% @end
 %% ----------------------------------------------------------------------------
--spec get_context(rtsp_connection:conn()) -> ctx().
+-spec get_context(rtsp:conn()) -> ctx().
 get_context(Conn) ->
   {ok, Ctx} = gen_server:call(?SERVER_NAME, {get_context, Conn}),
   Ctx.
@@ -53,7 +53,7 @@ init(_) ->
 %% @end
 %% ----------------------------------------------------------------------------
 
--spec handle_call(any(), rtsp_connection:conn(), state()) -> 
+-spec handle_call(any(), pid(), state()) -> 
         {reply, any(), state()}.
 
 handle_call({get_context, Conn}, _, State) ->

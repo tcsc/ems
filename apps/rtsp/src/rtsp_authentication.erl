@@ -5,7 +5,7 @@
 -include("../include/rtsp.hrl").
 -include("../include/digest.hrl").
 
--export([parse/1, get_user_name/1]).
+-export([parse/1, get_user_name/1, validate/4]).
 
 -compile(export_all).
 
@@ -39,7 +39,7 @@ parse(Header) ->
 get_user_name(AuthInfo) when is_record(AuthInfo, digest) ->
   AuthInfo#digest.user_name.
   
--spec validate(rtsp_connection:conn(), 
+-spec validate(rtsp:conn(), 
                rtsp:message(), 
                auth_info(), 
                rtsp:user_info()) ->  'ok' | 'fail' | 'stale'.
@@ -105,14 +105,14 @@ parse_digest_element(_, D) -> D.
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
--spec authenticate_digest(rtsp:message(), 
+-spec authenticate_digest(rtsp:request(), 
                           #digest{}, 
                           rtsp:user_info(),
                           rtsp_digest_server:ctx()) -> ok | fail | stale.
 authenticate_digest(
   _Request   = #rtsp_request{ method = Method }, 
-  AuthInfo  = #digest{ user_name = UserName, realm = Realm, qop = QoP, 
-                       uri = Uri, nonce = Nonce }, 
+  AuthInfo   = #digest{ user_name = UserName, realm = Realm, qop = QoP, 
+                        uri = Uri, nonce = Nonce }, 
   _UserInfo  = #rtsp_user_info{ password = Pwd },
   DigestCtx) ->
   

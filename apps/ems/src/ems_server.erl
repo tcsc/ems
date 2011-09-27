@@ -28,9 +28,11 @@
 %% @spec start_link(IpAddress,Port) -> {ok, Pid} | {error, Reason}
 %% @end
 %% ----------------------------------------------------------------------------
-start_link(Config) ->
+start_link(ConfigHandle) ->
   ?LOG_INFO("ems_server:start_link/1", []),
+  
   State = #server_state{name=ems_server},
+  Config = ems_config:get_config(ConfigHandle),
   
   case gen_server:start_link({local,ems_server}, ?MODULE, State, []) of
     {ok,Pid} -> 
@@ -39,7 +41,7 @@ start_link(Config) ->
                      {rtsp, Rtsp} -> Rtsp;
                      false -> []
                    end,
-      configure_rtsp_server(RtspConfig),
+      configure_rtsp_server(ConfigHandle, RtspConfig),
       {ok,Pid};
 
     Error ->
@@ -47,16 +49,18 @@ start_link(Config) ->
       Error
   end.    
 
-configure_rtsp_server(Config) -> 
+configure_rtsp_server(ConfigHandle, Config) -> 
   Ports = case lists:keyfind(ports, 1, Config) of
             {ports, Ps} -> Ps;
             false -> [554]
           end,
-  Bind = fun(P) -> 
-            rtsp_server:add_listener({0,0,0,0}, 
-                                     P, 
-                                     fun ems_rtsp_bridge:handle_request/2)
-         end,
+
+  Handler = 
+    fun(Conn,Msg) -> 
+      ems_rtsp_bridge:handle_request(ConfigHandle, Conn, Msg) 
+    end,
+
+  Bind = fun(P) -> rtsp:add_listener({0,0,0,0}, P, Handler) end,
   lists:foreach(Bind, Ports).
 
 %% ----------------------------------------------------------------------------
