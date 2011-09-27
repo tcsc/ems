@@ -6,15 +6,17 @@
 -export([load/1, get_config/1, get_mount_point/2, get_user_info/2]).
 
 %% ============================================================================
-%%
+%% Types & Type exports for the dialyzer
 %% ============================================================================
 -type cookie() :: any().
 -type handle() :: {cookie(), module()}. 
+-export_type([handle/0]).
+-opaque([handle/0]).
 
 %% ============================================================================
 %%
 %% ============================================================================
--spec load(FileName::string()) -> {ok, handle()} | {error, any()}.
+-spec load(string()) -> {ok, handle()} | {error, any()}.
 load(Path) ->
 	?LOG_DEBUG("config:load/1 - Compiling local configuration: ~s", [Path]),
 	try

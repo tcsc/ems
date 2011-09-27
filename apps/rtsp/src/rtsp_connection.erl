@@ -58,7 +58,7 @@
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------
--spec new(rtsp_server:svr(), string(), rtsp:request_callback()) -> 
+-spec new(rtsp:svr(), string(), rtsp:request_callback()) -> 
   {'ok', rtsp:conn()} | {'error', any()}.
 new(_Owner, ServerStr, Callback) -> 
   ?LOG_DEBUG("rtsp_connection:new/1", []),

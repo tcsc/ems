@@ -15,7 +15,7 @@
 %% ============================================================================
 -type svr() :: pid().
 -type ctx() :: #digest_ctx{}.
--export_types([ctx/0]).
+-export_type([svr/0, ctx/0]).
 -opaque([svr/0]).
 
 -record(state, {db :: dict(), timer :: timer:tref()}).
@@ -98,12 +98,13 @@ new_context() ->
 
 touch(Ctx) -> Ctx#digest_ctx{touched = erlang:now()}.
 
+-spec make_nonce(integer()) -> string().
 make_nonce(Size) ->
   F = fun(_,{P,N}) -> X = random:uniform(255),
                       {P+8, N + (X bsl P)}
       end, 
   {_,N} = lists:foldl(F, {0,0}, lists:seq(1,Size)),
-  N.
+  lists:flatten(io_lib:format([$~] ++ (integer_to_list(Size*2)) ++ ".16.0b", [N])).
 
 queue_timer() -> 
   timer:send_after(timer:seconds(30), cull_expired).

@@ -43,11 +43,12 @@
 -type response() :: #rtsp_response{}.
 -type header() :: #rtsp_message_header{}.
 -type user_info() :: #rtsp_user_info{}.
+-type svr() :: pid().
 -type conn() :: pid().
 -type request_callback() :: fun((conn(), message()) -> any()).
 
--export_type([message/0, request/0, header/0, request_callback/0, user_info/0]).
--opaque([conn/0]).
+-export_type([message/0, conn/0, svr/0, request/0, header/0, request_callback/0, user_info/0]).
+-opaque([conn/0, svr/0]).
                                  
 -type user_info_callback() :: fun((string()) -> false | {ok, user_info()}).
 -type authenticated_action() :: fun((user_info()) -> any()).
