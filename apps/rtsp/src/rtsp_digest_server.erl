@@ -89,8 +89,8 @@ handle_info(cull_expired, State = #state{db = Db,
   Now = erlang:now(),
   Filter = 
     fun(_,#digest_ctx{created = Created, touched = Touched}) ->
-      (timer:now_diff(Now, Created) > AgeCutoff) orelse 
-        (timer:now_diff(Now, Touched) > IdleCutoff)
+      (timer:now_diff(Now, Created) < AgeCutoff) andalso 
+        (timer:now_diff(Now, Touched) < IdleCutoff)
     end,
     
   DbP    = dict:filter(Filter, Db),
