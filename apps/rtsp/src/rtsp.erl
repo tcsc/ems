@@ -196,7 +196,7 @@ get_message_header(Msg, Name) when is_record(Msg, rtsp_message) ->
 -spec get_header(header(), string()) -> [string()] | 'undefined'.
 get_header(Headers, Header) when is_record(Headers, rtsp_message_header) ->
   case dict:find(Header, Headers#rtsp_message_header.headers) of
-    {ok, [Value]} -> Value;
+    {ok, Values} -> Values;
     _ -> undefined
   end.
   

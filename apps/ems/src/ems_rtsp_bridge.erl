@@ -1,6 +1,7 @@
 -module (ems_rtsp_bridge).
 -export([handle_request/3]).
 -include("rtsp.hrl").
+-include("config.hrl").
 
 -spec handle_request(ems_config:handle(), rtsp:conn(), rtsp:message()) -> any().
 handle_request(Config, Conn, Msg) ->
@@ -42,10 +43,14 @@ handle_request(_, Conn, Seq, _Method, _, _) ->
   rtsp:send_response(Conn, Seq, not_implemented, [], << >>).
 
 %% -----------------------------------------------------------------------------
+%% Utils
 %% -----------------------------------------------------------------------------
 
 get_user_info(Config, UserName) ->
-  case ems_config:get_user_name(Config, UserName) of
+  case ems_config:get_user_info(Config, UserName) of
     false -> false;
-    User -> {ok, User}
+    User -> {ok, translate_user(User)}
   end.
+  
+translate_user(#user_info{id = Id, login = LoginName, password = Pwd}) ->
+  #rtsp_user_info{id = Id, username = LoginName, password = Pwd}.

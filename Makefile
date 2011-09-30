@@ -29,10 +29,11 @@ run: all
 debug: all
 	erl $(ERL_FLAGS) -boot start_sasl -run appmon -run debugger
 
-#start #-run ems
+plt:
+	dialyzer --build_plt --output_plt ems.plt --apps stdlib kernel erts
 
 dialyzer: all
-	dialyzer -r apps 
+	dialyzer --plt ems.plt -r apps 
 
 # Note: In the open-source build, clean must not destroy the preloaded
 # beam files.
