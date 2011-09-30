@@ -216,7 +216,9 @@ parse_digest_rfc_test() ->
 digest_auth_test() ->
   AuthInfo = rfc_digest_example(),
   UserInfo = #rtsp_user_info{id = 1, username = "Mufasa", password = "Circle Of Life"},
-  Ctx      = {digest_ctx, "dcd98b7102dd2f0e8b11d0f600bfb0c093", now(), now()},
+  Ctx      = #digest_ctx{nonce = "dcd98b7102dd2f0e8b11d0f600bfb0c093", 
+                         created = {0,0,0}, 
+                         touched = {0,0,0}},
   Request  = #rtsp_request{method = "GET", uri = "/dir/index.html"},
   ?assertEqual(ok, authenticate_digest(Request, AuthInfo, UserInfo, Ctx)).
   
@@ -245,7 +247,7 @@ digest_qt_auth_test() ->
             "response=\"9848b05e17a00db2afadd399f53fcc80\", algorithm=\"MD5\", ",
             "opaque=\"4f677a90026c75378f29b23625997aab\""]),
   {ok, AuthInfo} = parse(Text),
-  Ctx = {digest_ctx, "ea995080f2b97218", now(), now()},
+  Ctx = #digest_ctx{ nonce = "ea995080f2b97218", created = now(), touched = now() },
   UserInfo = #rtsp_user_info{id = 1, username = "trent", password = "password"},
   Request = #rtsp_request{method = "ANNOUNCE", uri = "/trent.sdp"}, 
   ?assertEqual(ok, authenticate_digest(Request, AuthInfo, UserInfo, Ctx)).
