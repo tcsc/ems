@@ -1,34 +1,52 @@
 -module (sdp).
+-author ("Trent Clarke <trent.clarke@gmail.com>").
+-include_lib("eunit/include/eunit.hrl").
 
 -export([parse/1, format/1]).
 -include("sdp.hrl").
 
+-compile(export_all).
+
+
+% =============================================================================
+% Types
+% =============================================================================
+
+-type media_type() :: 'audio' | 'video' | 'application' | 'data' | 'control'.
+-type session_description() :: #session_description{}.
+-export_type([media_type/0, session_description/0]).
+
 % =============================================================================
 % Exported functions
 % =============================================================================  
+
+-spec parse(string() | binary()) -> {'ok', session_description()} | 'fail'.
 
 parse(Body) when is_binary(Body) ->
   Text = utf:utf8_to_string(Body),
   parse(Text);
   
 parse(Text) ->
-  Parser = fun(Line) -> parse_line(Line) end,
-  Lines = lists:map(Parser, re:split(Text, <<"\r\n">>, [trim, {return,list}])),
+  try
+    Lines = lists:map(fun parse_line/1, re:split(Text, <<"\r\n">>, [trim, {return,list}])),
   
-  SessionBlock = extract_session_block(Lines),
-  Attributes = extract_attributes(SessionBlock),
+    SessionBlock = extract_til_stream(Lines),
+    Attributes = extract_attributes(SessionBlock),
   
-  RtpMap = extract_rtp_map(Lines),
-  FormatMap = extract_format_map(Lines),
-  Streams = collect_media_streams(Lines),
+    RtpMap = extract_rtp_map(Lines),
+    FormatMap = extract_format_map(Lines),
+    Streams = collect_media_streams(Lines),
   
-  #session_description{
-    attributes = Attributes,
-    streams = Streams, 
-    rtp_map = RtpMap, 
-    format_map = FormatMap}.
+    Desc = #session_description{ attributes = Attributes,
+                                 streams = Streams, 
+                                 rtp_map = RtpMap, 
+                                 format_map = FormatMap },
+    {ok, Desc}
+  catch
+    fail -> fail
+  end.
       
--spec format( Description :: session_description() ) -> binary().
+-spec format( session_description() ) -> binary().
 format(Description) ->
   <<>>.
   
@@ -84,24 +102,6 @@ extract_format_map(Lines) ->
     end,
     Formats).
     
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------
-extract_session_block(Lines) ->
-  lists:reverse(extract_session_block(Lines, [])).
-
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------
-extract_session_block(Line, SessionBlock) when is_record(Line, media_stream) ->
-  SessionBlock;
-
-extract_session_block([], SessionBlock) ->
-  SessionBlock;
-  
-extract_session_block([Line|Remainder], SessionBlock) ->
-  extract_session_block(Remainder, [Line|SessionBlock]).
-
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
@@ -165,24 +165,17 @@ parse_line([$r, $= | Line]) ->
   {repeat_time, Line};
 
 parse_line([$m, $= | MediaStream]) ->
-  case string:tokens(MediaStream, [16#20]) of
-    [MediaType,Port,Transport,Format] ->
-      #media_stream{ type = media_type(MediaType),
-                     port = Port, 
-                     transport = Transport,
-                     format = stringutils:to_int_def(Format,Format)};
-
-    [MediaType,Port,Transport] ->
-      #media_stream{ type = media_type(MediaType),
-                     port = Port, 
-                     transport = Transport}
-  end;
-  
+  [MediaType, Ports, Transport | Formats] = string:tokens(MediaStream, [16#20]),
+  {media_stream, media_type(MediaType), 
+                 ports(Ports),
+                 Transport,
+                 lists:map(fun list_to_integer/1, Formats)};
+                    
 parse_line([$i, $= | Line]) ->
   {stream_title, Line};
   
 parse_line([$c, $= | Line]) ->
-  case string:tokens(Line, [16#20, $/]) of
+  case string:tokens(Line, [16#20]) of
     [NetName,AddrName,Addr] ->
       Net = case NetName of 
         "IN" -> internet;
@@ -216,7 +209,9 @@ parse_line([$b, $= | Line]) ->
       {bandwidth_info, Modifier, list_to_integer(Value)}
   end;
   
-parse_line([]) -> {}.
+parse_line([]) -> {};
+
+parse_line(_) -> throw(fail).
 
 %% ----------------------------------------------------------------------------
 %%
@@ -228,54 +223,52 @@ collect_media_streams(Lines) ->
 %% @doc 
 %% @end
 %% ----------------------------------------------------------------------------
-collect_media_streams([Stream|Lines], Streams) 
-    when is_record(Stream, media_stream) ->
-  
-  StreamBlock = extract_stream_block(Lines),
-  
-  Attributes = extract_attributes(Lines),
-    
-  ControlUri = case lists:keyfind(control, 1, StreamBlock) of
-    {control, Uri} -> Uri;
-    false -> ""
-  end,
-  
-  BandwidthInfo = case lists:keyfind(bandwidth_info, 1, StreamBlock) of
-    false -> undefined;
-    Any -> Any
-  end,   
-  
-  StreamRecord = Stream#media_stream{
-    control_uri = ControlUri, 
-    bandwidth_info = BandwidthInfo},
-    
+collect_media_streams([Line|Lines], Streams) 
+    when element(1, Line) == media_stream ->
+
+  {media_stream, Type, Ports, Transport, Formats} = Line,
+  StreamBlock = extract_til_stream(Lines),
+  Attributes = extract_attributes(StreamBlock),
+  {control, ControlUri} = find_def(control, StreamBlock,""),
+  {bandwidth_info, BwInfo} = find_def(bandwidth_info, StreamBlock, undefined),
+
+  StreamRecord = #media_stream{ type = Type,
+                               ports = Ports,
+                               transport = Transport,   
+                               formats = Formats,
+                               attributes = Attributes,
+                               control_uri = ControlUri, 
+                               bandwidth_info = BwInfo },
   collect_media_streams(Lines, [StreamRecord | Streams]);
-       
+
 collect_media_streams([Line|Lines], Streams) ->
   collect_media_streams(Lines, Streams);
-
-collect_media_streams([], Streams) ->
-  lists:reverse(Streams).
+  
+collect_media_streams([], Streams) -> Streams.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-extract_stream_block(Lines) ->
-  lists:reverse(extract_stream_block(Lines, [])).
-  
+find_def(Name, List, Default) ->
+  case lists:keyfind(Name, 1, List) of
+    false -> {Name, Default};
+    Value -> Value    
+  end.
+
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
+extract_til_stream(Lines) -> lists:reverse(extract_til_stream(Lines, [])).
 
-extract_stream_block([], StreamBlock) ->
+extract_til_stream([], StreamBlock) ->
   StreamBlock;
   
-extract_stream_block([Line|Lines], StreamBlock) 
-    when is_record(Line, media_stream) ->
+extract_til_stream([Line|Lines], StreamBlock) 
+    when element(1, Line) =:= media_stream ->
   StreamBlock;
   
-extract_stream_block([Line|Lines], StreamBlock) ->
-  extract_stream_block(Lines,[Line|StreamBlock]).
+extract_til_stream([Line|Lines], StreamBlock) ->
+  extract_til_stream(Lines,[Line|StreamBlock]).
   
 %% ----------------------------------------------------------------------------
 %% @doc Parses an RtpMap attribute into a record
@@ -286,7 +279,9 @@ parse_rtp_map(Text) ->
     [Entry, Encoding, ClockRate] ->
       #rtp_map{id = list_to_integer(Entry), 
                encoding = Encoding,
-               clock_rate = list_to_integer(ClockRate)};
+               clock_rate = list_to_integer(ClockRate),
+               options = []};
+
     [Entry, Encoding, ClockRate, Options] ->
         #rtp_map{id = list_to_integer(Entry), 
                  encoding = Encoding,
@@ -296,13 +291,9 @@ parse_rtp_map(Text) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Parses an SDP media type string
-%% @spec media_type(MediaType) -> Result
-%%       MediaType = string() | MediaTypeAtom
-%%       Result = MediaTypeAtom | string()
-%%       MediaTypeAtom = audio | video | application | data | control
 %% @end
 %% ----------------------------------------------------------------------------
-
+-spec media_type( atom() | string() ) -> media_type().
 media_type(MediaType) when is_atom(MediaType) ->
   case MediaType of 
     audio -> "audio";
@@ -322,20 +313,72 @@ media_type(MediaType) when is_list(MediaType) ->
   end.
 
 %% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+  
+-spec ports(string()) -> [integer()].
+ports(Ports) -> 
+  case lists:splitwith(fun(X) -> X /= $/ end, Ports) of
+    {Ps, []} -> [list_to_integer(Ps)];
+    {Ps, [$/ | Ns]} -> P = list_to_integer(Ps),
+                       N = list_to_integer(Ns),
+                       lists:seq(P, (P+N)-1)
+  end.
+  
+%% ----------------------------------------------------------------------------
 %% Parses a FormatP parameter
-%% @spec parse_format_parameter(FormatP) -> Result
-%%       Result = {MediaId, Parameters}
-%%       Parameters = [Parameter]
-%%       Parameter = {Name, Value}
-%%       Name = string()
-%%       Value = string()
 %% @end
 %% ----------------------------------------------------------------------------
-
+-spec parse_format_parameter(string()) -> {'format_p', integer(), string()}.
 parse_format_parameter(FormatP) when is_list(FormatP) ->
-  [MediaId | Params] = string:tokens(FormatP, [16#20, $;]),
-  Parameters = 
-    lists:map(
-      fun(Param) -> stringutils:split_on_first($=, Param) end,
-      Params),
-  {format_p, list_to_integer(MediaId), Parameters}.
+  {MediaId, Params} = stringutils:split_on_first(16#20, FormatP),
+  {format_p, list_to_integer(MediaId), Params}.
+  
+%% ============================================================================
+%% Unit Tests
+%% ============================================================================
+
+rfc_text() -> 
+  "v=0\r\n"                                              ++ 
+  "o=jdoe 2890844526 2890842807 IN IP4 10.47.16.5\r\n"   ++
+  "s=SDP Seminar\r\n"                                    ++ 
+  "i=A Seminar on the session description protocol\r\n"  ++
+  "u=http://www.example.com/seminars/sdp.pdf\r\n"        ++
+  "e=j.doe@example.com (Jane Doe)\r\n"                   ++
+  "c=IN IP4 224.2.17.12/127\r\n"                         ++
+  "t=2873397496 2873404696\r\n"                          ++
+  "a=recvonly\r\n"                                       ++
+  "m=audio 49170 RTP/AVP 0\r\n"                          ++
+  "a=control:streamid=2\r\n"                             ++   
+  "m=video 51372/2 RTP/AVP 97 98 99\r\n"                 ++
+  "a=rtpmap:99 h263-1998/90000\r\n"                      ++
+  "a=fmtp:99 1234567890ABCDEF\r\n"                       ++
+  "a=control:streamid=1\r\n"                             ++
+  "a=name:value".
+  
+rfc_parse_test() ->
+  Vids = #media_stream{type = video,
+                       ports = [51372, 51373],
+                       transport = "RTP/AVP",
+                       formats = [97, 98, 99],
+                       attributes = [{"name", "value"}],
+                       control_uri = "streamid=1",
+                       bandwidth_info = undefined },
+  Auds = #media_stream{type = audio,
+                       ports = [49170],
+                       transport = "RTP/AVP",
+                       formats = [0],
+                       attributes = [],
+                       control_uri = "streamid=2",
+                       bandwidth_info = undefined },
+  Expected = #session_description{ attributes = [{"recvonly", ""}],
+                                   streams = [Auds, Vids],
+                                   rtp_map = [{99, #rtp_map{id = 99, 
+                                                            encoding = "h263-1998",  
+                                                            clock_rate = 90000, 
+                                                            options = []}}],
+                                   format_map = [{99, "1234567890ABCDEF"}] },
+  ?assertEqual({ok, Expected}, parse(rfc_text())).
+  
+invalid_parse_test() -> 
+  ?assertEqual(fail, parse("v=0\r\nnarf\r\n")). 
