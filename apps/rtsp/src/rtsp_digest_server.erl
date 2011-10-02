@@ -98,9 +98,16 @@ handle_info(cull_expired, State = #state{db = Db,
   StateP = State#state{db = DbP, timer = TRef},
   {noreply, StateP}.
   
+%% ----------------------------------------------------------------------------
+%% @doc Cleans up after the server is terminated
+%% @private
+%% @end
+%% ----------------------------------------------------------------------------
+-spec terminate(Reason :: any(), State :: state()) -> ok.
 terminate(_Reason, State) ->
   io:format("Terminated: ~w", [_Reason]),
-  timer:cancel(State#state.timer).
+  erlang:cancel_timer(State#state.timer),
+  ok.
   
 code_change(_, State, _) -> 
   {ok, State}.
