@@ -1,18 +1,42 @@
 -module (ems_rtsp_bridge).
+
+%% ============================================================================
+%% @author Trent Clarke <trent.clarke@gmail.com>
+%% @doc Acts as a bridge between the Internet-facing RTSP service and the 
+%%      internal media server. The idea is that the code in this module will 
+%%      translate the RTSP requests into something that the ems will understand
+%%      and be able to act upon, and translate the ems' responsed back into 
+%%      valid RTSP responsef for transmission backto the client.
+%% @end
+%% ============================================================================
+
 -export([handle_request/3]).
 -include("rtsp.hrl").
 -include("config.hrl").
 
+%% ----------------------------------------------------------------------------
+%% @doc Handles inbound requests from an RTSP server. This should be called
+%%      from a lambda passed to the RTSP server during setup. We're guaranteed
+%%      be the RTSP server that this function will be invoked on a process 
+%%      other than the one managing the connection or the server, so all
+%%      RTSP connection or server functions can be called without fear of a 
+%%      deadlock.
+%% @end
+%% ----------------------------------------------------------------------------
 -spec handle_request(ems_config:handle(), rtsp:conn(), rtsp:message()) -> any().
 handle_request(Config, Conn, Msg) ->
 	{Method, Uri, Sequence, _, _} = rtsp:get_request_info(Msg),
   handle_request(Config, Conn, Sequence, Method, Uri, Msg).
 
 %% ----------------------------------------------------------------------------
-%% @spec handle_request(Method, Request,Headers,Body,State) -> Result
-%%       Method = options | accounce | setup | play | teardown
-%% @end
-%% ----------------------------------------------------------------------------  
+%% ----------------------------------------------------------------------------
+-spec handle_request(Config :: ems_config:handle(), 
+                     Conn   :: rtsp:conn(), 
+                     Seq    :: integer(), 
+                     Method :: string(),
+                     Uri    :: string(),
+                     Msg    :: rtsp::message()) -> any().
+
 handle_request(_, Conn, Seq, "OPTIONS", _, _) ->
   PublicOptions = [?RTSP_METHOD_ANNOUNCE,
                    ?RTSP_METHOD_DESCRIBE,
