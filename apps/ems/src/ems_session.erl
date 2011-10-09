@@ -1,24 +1,42 @@
 -module(ems_session).
+%-behavior(gen_server).
 -include("logging.hrl").
 -include ("sdp.hrl").
 -include("rtsp.hrl").
 
+
+
 %% ============================================================================
 %% Definitions
 %% ============================================================================
--record(state, {id, path, owner, description, channels, clients = dict:new()}).
+-record(state, {id          :: integer(), 
+                path        :: string(),  
+                description :: sdp:session_description(), 
+                channels    :: [any()], 
+                clients     :: dict() }).
 -record(client, {id, subscriptions = []}).
 -record(subscription, {pid, path}).
 	
 -export([
+  new/2,
   start_link/3,
   receive_rtsp_request/5]).
   
 -export([start_session/1]).
 
+-type session() :: pid().
+-export_type([session/0]).
+-opaque_type([session/0]).
+
 %% ============================================================================
 %% Exports
 %% ============================================================================
+
+-spec new(Path :: string(), Description :: sdp:session_description()) -> {'ok', session()}.
+new(Path, Description) -> 
+  ?LOG_DEBUG("session:new/2 - Creating session for ~s", [Path]),
+  State = #state{path = Path, description = Description},
+  {ok, self()}.
 
 %% ----------------------------------------------------------------------------
 %% @doc Starts a new session and returns the new session's process identifier.
@@ -27,7 +45,7 @@
 -spec start_link(Id::integer(), Path::string(), OwnerPid::pid()) -> pid().
 start_link(Id, Path, OwnerPid) ->
   ?LOG_DEBUG("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
-  State = #state{id = Id, path = Path, owner = OwnerPid},
+  State = #state{id = Id, path = Path},
   {ok, erlang:spawn_link(?MODULE, start_session, [State])}
   .
   
@@ -75,7 +93,7 @@ session_loop(State) ->
 init({Id, Path, OwnerPid}) ->
   ?LOG_DEBUG("ems_session:init/3 - ~s", [Path]),
   process_flag(trap_exit, true),
-  State = #state{id=Id, path=Path, owner=OwnerPid},
+  State = #state{id=Id, path=Path},
   {ok, State}.
 
 %% ----------------------------------------------------------------------------
@@ -247,7 +265,7 @@ create_channels(_Desc = #session_description{streams = Streams,
                                              rtp_map = RtpMap,
                                              format_map = _Formats}) ->
   Result = lists:map(
-    fun (Stream = #media_stream{format = FormatIndex}) ->
+    fun (Stream = #media_stream{formats = FormatIndex}) ->
       RtpMapEntry = case lists:keyfind(FormatIndex, 1, RtpMap) of
         false -> throw({ems_session, missing_rtpmap_entry});
         Entry -> Entry

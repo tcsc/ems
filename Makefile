@@ -29,8 +29,11 @@ run: all
 debug: all
 	erl $(ERL_FLAGS) -boot start_sasl -run appmon -run debugger
 
+test: all
+	erl $(ERL_FLAGS) -pa test -run all_tests -s init stop
+
 plt:
-	dialyzer --build_plt --output_plt ems.plt --apps stdlib kernel erts
+	dialyzer --build_plt --output_plt ems.plt --apps stdlib kernel erts inets eunit
 
 dialyzer: all
 	dialyzer --plt ems.plt -r apps 
@@ -38,7 +41,9 @@ dialyzer: all
 # Note: In the open-source build, clean must not destroy the preloaded
 # beam files.
 clean:
+	rm test/*.beam
 	rm -fr apps/*/ebin/*.beam
+	rm -fr apps/*/ebin_test/*.beam
 	rm -f erl_crash.dump
 
 $(APPUP_TARGET): $(APPUP_SRC) vsn.mk

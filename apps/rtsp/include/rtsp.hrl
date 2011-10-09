@@ -34,7 +34,7 @@
 %% ----------------------------------------------------------------------------
 -record(rtsp_message, { message :: #rtsp_request{} | #rtsp_response{}, 
                         headers :: #rtsp_message_header{},
-                        body    :: binary()}).  
+                        body    :: binary() }).  
 
 %% ============================================================================
 %% RTSP constants

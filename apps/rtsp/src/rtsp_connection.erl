@@ -341,6 +341,7 @@ dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
 %% @end
 %% ----------------------------------------------------------------------------
 send_server_error(Pid, Reason, Sequence) when is_list(Reason) ->
+  ?LOG_DEBUG("rtsp_connection:send_server_error/3 - ~w", [Reason]),
   Message = lib_io:format("Error ~w", [Reason]),
   Body = utf:string_to_utf8(Message),
   Headers = [{content_type, "text/plain; charset=utf-8"}],
@@ -348,7 +349,8 @@ send_server_error(Pid, Reason, Sequence) when is_list(Reason) ->
   ok;
   
 send_server_error(Pid, Reason, Sequence) ->
-  send_response(Pid, Sequence, Reason, [], << >>),
+  Text = io_lib:format("Internal Server Error: ~w", Reason),
+  send_response(Pid, Sequence, Text, [], << >>),
   ok.
 
 %% ----------------------------------------------------------------------------
@@ -453,11 +455,21 @@ with_authenticated_user_do(Conn, Request, PwdCallback, Action) ->
                    _ -> throw(bad_request)
                  end,
       UserName = rtsp_authentication:get_user_name(AuthInfo),
+      
+      ?LOG_DEBUG("rtsp_connection:with_authenticated_user_do/4 - authenticating user \"~s\"", 
+        [UserName]),
       case PwdCallback(UserName) of
-        false -> throw({unauthorized, no_such_user});
+        false ->
+          ?LOG_DEBUG("rtsp_connection:with_authenticated_user_do/4 - no such user \"~s\"", [UserName]), 
+          throw({unauthorized, no_such_user});
+          
         {ok, UserInfo} -> 
           case rtsp_authentication:validate(Conn, Request, AuthInfo, UserInfo) of
-            ok -> Action(UserInfo), ok;
+            ok ->
+              ?LOG_DEBUG("rtsp_connection:with_authenticated_user_do/4 - authenticated", []),
+              Action(UserInfo), 
+              ok;
+              
             fail -> throw({unauthorized, auth_failed});
             stale -> throw({unauthorized, stale})
           end

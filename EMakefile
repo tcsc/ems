@@ -7,9 +7,20 @@
                          {i, "apps/rtsp/include"},
 						 {i, "include"} ]}.
 
+{"apps/rtsp/test/*",     [debug_info, 
+                          {outdir, "apps/rtsp/ebin"},
+                          {i, "apps/rtsp/include"} ]}.
+
 {"apps/ems/src/*",      [debug_info, 
-						 {outdir, "apps/ems/ebin"}, 
-						 {i, "include"},
-						 {i, "apps/rtsp/include"}]}
-						.
+                          {outdir, "apps/ems/ebin"}, 
+                          {i, "include"},
+                          {i, "apps/ems/include"},
+                          {i, "apps/rtsp/include"}]}.
+
+{"apps/ems/test/*",     [debug_info, 
+						  {outdir, "apps/ems/ebin"}, 
+						  {i, "apps/ems/include"} ]}.
+						
 {"apps/ems/src/rtp/*",  [debug_info, {outdir, "apps/ems/ebin"}, {i, "include"}]}.
+
+{"test/all_tests.erl", [{outdir, "test"}]}.

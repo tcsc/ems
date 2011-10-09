@@ -100,7 +100,7 @@ handle_info(cull_expired, State = #state{db = Db,
   
 %% ----------------------------------------------------------------------------
 %% @doc Cleans up after the server is terminated
-%% @private
+%% @priqvate
 %% @end
 %% ----------------------------------------------------------------------------
 -spec terminate(Reason :: any(), State :: state()) -> ok.

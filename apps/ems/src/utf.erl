@@ -8,9 +8,9 @@
 
 %% ----------------------------------------------------------------------------
 %% @doc Converts a utf-8 encoded binary buffer into a text string.
-%% @spec utf8_to_string(Utf8) -> string()
 %% @end
 %% ----------------------------------------------------------------------------
+-spec utf8_to_string(binary()) -> string().
 utf8_to_string(Utf8) ->
 	utf8_to_string(Utf8,[]).
 

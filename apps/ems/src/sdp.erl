@@ -1,12 +1,7 @@
 -module (sdp).
 -author ("Trent Clarke <trent.clarke@gmail.com>").
--include_lib("eunit/include/eunit.hrl").
-
 -export([parse/1, format/1]).
 -include("sdp.hrl").
-
--compile(export_all).
-
 
 % =============================================================================
 % Types
@@ -32,12 +27,16 @@ parse(Text) ->
   
     SessionBlock = extract_til_stream(Lines),
     Attributes = extract_attributes(SessionBlock),
+    {name, Name} = find_def(name, SessionBlock, undefined),
+    {info, Info} = find_def(info, SessionBlock, undefined),
   
     RtpMap = extract_rtp_map(Lines),
     FormatMap = extract_format_map(Lines),
     Streams = collect_media_streams(Lines),
   
-    Desc = #session_description{ attributes = Attributes,
+    Desc = #session_description{ name = Name,
+                                 info = Info,
+                                 attributes = Attributes,
                                  streams = Streams, 
                                  rtp_map = RtpMap, 
                                  format_map = FormatMap },
@@ -172,7 +171,7 @@ parse_line([$m, $= | MediaStream]) ->
                  lists:map(fun list_to_integer/1, Formats)};
                     
 parse_line([$i, $= | Line]) ->
-  {stream_title, Line};
+  {info, Line};
   
 parse_line([$c, $= | Line]) ->
   case string:tokens(Line, [16#20]) of
@@ -229,9 +228,12 @@ collect_media_streams([Line|Lines], Streams)
   {media_stream, Type, Ports, Transport, Formats} = Line,
   StreamBlock = extract_til_stream(Lines),
   Attributes = extract_attributes(StreamBlock),
-  {control, ControlUri} = find_def(control, StreamBlock,""),
-  {bandwidth_info, BwInfo} = find_def(bandwidth_info, StreamBlock, undefined),
-
+  {control, ControlUri} = find_def(control, StreamBlock, ""),
+  BwInfo = case lists:keyfind(bandwidth_info, 1, StreamBlock) of
+             {bandwidth_info, Modifier, Rate} -> {Modifier, Rate};
+             false -> undefined
+           end,
+  
   StreamRecord = #media_stream{ type = Type,
                                ports = Ports,
                                transport = Transport,   
@@ -333,52 +335,3 @@ ports(Ports) ->
 parse_format_parameter(FormatP) when is_list(FormatP) ->
   {MediaId, Params} = stringutils:split_on_first(16#20, FormatP),
   {format_p, list_to_integer(MediaId), Params}.
-  
-%% ============================================================================
-%% Unit Tests
-%% ============================================================================
-
-rfc_text() -> 
-  "v=0\r\n"                                              ++ 
-  "o=jdoe 2890844526 2890842807 IN IP4 10.47.16.5\r\n"   ++
-  "s=SDP Seminar\r\n"                                    ++ 
-  "i=A Seminar on the session description protocol\r\n"  ++
-  "u=http://www.example.com/seminars/sdp.pdf\r\n"        ++
-  "e=j.doe@example.com (Jane Doe)\r\n"                   ++
-  "c=IN IP4 224.2.17.12/127\r\n"                         ++
-  "t=2873397496 2873404696\r\n"                          ++
-  "a=recvonly\r\n"                                       ++
-  "m=audio 49170 RTP/AVP 0\r\n"                          ++
-  "a=control:streamid=2\r\n"                             ++   
-  "m=video 51372/2 RTP/AVP 97 98 99\r\n"                 ++
-  "a=rtpmap:99 h263-1998/90000\r\n"                      ++
-  "a=fmtp:99 1234567890ABCDEF\r\n"                       ++
-  "a=control:streamid=1\r\n"                             ++
-  "a=name:value".
-  
-rfc_parse_test() ->
-  Vids = #media_stream{type = video,
-                       ports = [51372, 51373],
-                       transport = "RTP/AVP",
-                       formats = [97, 98, 99],
-                       attributes = [{"name", "value"}],
-                       control_uri = "streamid=1",
-                       bandwidth_info = undefined },
-  Auds = #media_stream{type = audio,
-                       ports = [49170],
-                       transport = "RTP/AVP",
-                       formats = [0],
-                       attributes = [],
-                       control_uri = "streamid=2",
-                       bandwidth_info = undefined },
-  Expected = #session_description{ attributes = [{"recvonly", ""}],
-                                   streams = [Auds, Vids],
-                                   rtp_map = [{99, #rtp_map{id = 99, 
-                                                            encoding = "h263-1998",  
-                                                            clock_rate = 90000, 
-                                                            options = []}}],
-                                   format_map = [{99, "1234567890ABCDEF"}] },
-  ?assertEqual({ok, Expected}, parse(rfc_text())).
-  
-invalid_parse_test() -> 
-  ?assertEqual(fail, parse("v=0\r\nnarf\r\n")). 
