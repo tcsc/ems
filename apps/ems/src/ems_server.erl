@@ -68,7 +68,7 @@ stop(_State) ->
                      Path     :: string(),
                      UserInfo :: any(),
                      Desc     :: sdp:session_description(),
-                     Options  :: [any()] ) -> {ok, ems:session()} | 'not_found' | 'not_authorised'.
+                     Options  :: [any()] ) -> {ok, ems:session()} | 'not_found' | 'not_authorised' | 'already_exists'.
 create_session(Config, Path, UserInfo, Desc, _Options) -> 
   case ems_config:get_mount_point(Config, Path) of 
     {ok, MountPoint} ->

@@ -61,9 +61,9 @@ handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
       {_, _, _, Path} = url:parse(Uri),
       Response = 
         case ems_server:create_session(Config, Path, UserInfo, Desc, []) of
-          ok -> ok;
+          {ok, _} -> ok;
           already_exists -> method_not_valid;
-          unathorised -> throw(unathorized);
+          not_authorised -> throw(unathorized);
           not_found -> not_found
         end,
       rtsp:send_response(Conn, Seq, Response, [], << >>)

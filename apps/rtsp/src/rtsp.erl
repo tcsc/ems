@@ -238,19 +238,17 @@ parse_transport([], Result) ->
 %%
 %% -----------------------------------------------------------------------------
 parse_transport_spec(Spec) ->
-  Elements = string:tokens(Spec, "/"),
+  [ProtoText, ProfileText | Remainder] = string:tokens(Spec, "/"),
   
-  Protocol = parse_transport_protocol(lists:nth(1, Elements)),
-  Profile = parse_transport_profile(lists:nth(2, Elements)),
+  Protocol = parse_transport_protocol(ProtoText),
+  Profile = parse_transport_profile(ProfileText),
   
-  if
-    length(Elements) > 2 ->
-      LowerTransport = parse_lower_transport(lists:nth(3, Elements)),
-      [{protocol,Protocol}, {profile,Profile}, {lower_transport, LowerTransport}];
-    
-    true -> 
-      [{protocol,Protocol}, {profile,Profile}]
-  end.
+  LowerTransport = case Remainder of
+    [LT|_] -> parse_lower_transport(LT);
+    _ -> udp
+  end,
+  
+  [{lower_transport, LowerTransport}, {profile,Profile}, {protocol,Protocol}].  
 
 %% -----------------------------------------------------------------------------
 %%
@@ -292,7 +290,8 @@ parse_transport_mode(Mode) ->
 
 %% -----------------------------------------------------------------------------
 %%
-%% -----------------------------------------------------------------------------    
+%% -----------------------------------------------------------------------------
+-spec parse_int(string()) -> integer(). 
 parse_int(Text) ->
   try
     list_to_integer(Text)
@@ -438,7 +437,10 @@ parse_headers([Line|Leftover], Headers) ->
   {ValueText,_} = stringutils:extract_token(Line,EndOfName+1,$\n),
   Name = string:strip(NameText),
   Value = lists:flatten(string:strip(ValueText)),
-  NewHeaders = dict:append(Name,Value,Headers),
+  NewHeaders = case Name of 
+                 "" -> Headers;
+                 N -> dict:append(N,Value,Headers)
+               end,
   parse_headers(Leftover, NewHeaders);
 
 parse_headers([], Headers) -> 
@@ -461,7 +463,7 @@ reify_headers(Headers) ->
   ContentType = 
     case dict:find("Content-Type", Headers) of
       {ok, [ContentTypeText]} -> ContentTypeText;
-      _ -> ""
+      _ -> undefined
     end,
 
   {Sequence,_} = string:to_integer(CSeq),
@@ -647,8 +649,8 @@ format_lower_transport(Transport) ->
 %% ----------------------------------------------------------------------------  
 format_transport_mode(Mode) ->
   case Mode of 
-    inbound -> "record";
-    outbound -> "play";
+    inbound -> "\"RECORD\"";
+    outbound -> "\"PLAY\"";
     _ -> Mode
   end.
 

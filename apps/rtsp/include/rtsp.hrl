@@ -7,7 +7,7 @@
 -record(rtsp_message_header, {
   sequence, 
   content_length = 0, 
-  content_type = "", 
+  content_type, 
   headers = dict:new()}).
 
 %% ----------------------------------------------------------------------------

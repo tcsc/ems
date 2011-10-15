@@ -15,15 +15,15 @@
 parse(Packet) when is_binary(Packet) ->
   case Packet of 
     <<2:2, _Padding:1, Extension:1, SyncSrcCount:4, Marker:1, PayloadType:7,
-      Sequence:16/big, Timestamp:32/big, SyncSource:32, _/binary>> ->
+      Sequence:16/big-unsigned-integer, Timestamp:32/big-unsigned-integer, SyncSource:32/big-unsigned-integer, _/binary>> ->
     
       RtpHeaderLen = (12 + (4*SyncSrcCount)),
-      StartOfPayload = RtpHeaderLen + case Extension of
-        1 ->
-          <<_:RtpHeaderLen/binary, _:16/big, Length:16/big, _/binary>> = Packet,
-          4 + Length;
-        0 -> 0
-      end,
+      ExtensionBytes = case Extension of
+                         1 -> <<_:RtpHeaderLen/binary, _:16, Length:16/big-unsigned-integer, _/binary>> = Packet,
+                              4 + Length;
+                         0 -> 0
+                       end,
+      StartOfPayload = RtpHeaderLen + ExtensionBytes,
   
       case Packet of
         <<_:StartOfPayload/binary, Payload/binary>> ->
@@ -32,8 +32,7 @@ parse(Packet) when is_binary(Packet) ->
                                      marker = Marker, 
                                      payload_type = PayloadType,
                                      sequence = Sequence,
-                                     payload = Payload},
-                                     
+                                     payload = Payload},        
           {ok, ParsedPacket};
                                      
         _ -> false
