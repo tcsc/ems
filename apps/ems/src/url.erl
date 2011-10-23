@@ -2,33 +2,38 @@
 -export([parse/1]).
 
 %% ----------------------------------------------------------------------------
+%% Data types
+%% ----------------------------------------------------------------------------
+-type scheme() :: 'rtsp' | 'http' | 'ftp' | 'file'.
+-type error() :: 'unknown'.
+% a semi-parsed URL with the same format as an http url
+-type http_url() :: {scheme(), string(), integer(), string()}.
+-export_type([scheme/0, error/0]).
+
+%% ----------------------------------------------------------------------------
 %% @doc parses an url
-%% @spec parse(Url) -> Result
-%%       Url = string
-%%       Result = {error, Reason} | {Scheme,Host,Port,Path}
-%%       Scheme = http | rtsp | file | string()
 %% @end
 %% ----------------------------------------------------------------------------
-
+-spec parse(string()) -> http_url() | {error(), atom()}. 
 parse([$h,$t,$t,$p,$:,$/,$/ | Text]) -> 
-  parse_http(http, Text);
+  parse_http(http, 80, Text);
   
 parse([$r,$t,$s,$p,$:,$/,$/ | Text]) -> 
-  parse_http(rtsp, Text);
+  parse_http(rtsp, 554, Text);
   
-parse(_Url) -> 
-  {error,unkown}.  
+parse(_) -> {error,unknown}.  
 
 %% ----------------------------------------------------------------------------
-%% @doc Parses an http url 
+%% @doc Parses an http (or equivalently formated) url 
 %% @end
 %% ----------------------------------------------------------------------------  
-parse_http(Scheme, Uri) ->
+-spec parse_http(scheme(), integer(), string()) -> http_url(). 
+parse_http(Scheme, DefaultPort, Uri) ->
   case string:chr(Uri, $/) of
     0 ->
       %% no path component in the uri and the uri isn't terminated by a slash - 
       %% append the slash and try again 
-      parse_http(Scheme, Uri ++ "/");
+      parse_http(Scheme, DefaultPort, Uri ++ "/");
     N -> 
       %% Everything between the start of the string and the first slash is the 
       %% host (possibly includng the port) - the rest is the path to the file.
@@ -41,7 +46,7 @@ parse_http(Scheme, Uri) ->
         0 -> 
           %% No port spec is present in the url - assume that it's port 80 and
           %% return it
-          {Scheme, Host, 80, Path};
+          {Scheme, Host, DefaultPort, Path};
           
         M ->
           %% Port spec if present - extract it out and parse it, assuming port

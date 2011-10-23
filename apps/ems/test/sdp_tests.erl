@@ -63,7 +63,6 @@ qt_text() ->
   "t=0 0\r\n"                                                ++
   "a=x-qt-text-an.:Test Broadcast\r\n"                       ++
   "a=x-qt-text-ua.:Trent Clarke\r\n"                         ++
-  "a=range:npt=now-\r\n"                                     ++
   "a=isma-compliance:2,2.0,2\r\n"                            ++
   "m=audio 0 RTP/AVP 96\r\n"                                 ++
   "b=AS:16\r\n"                                              ++
@@ -113,7 +112,6 @@ qt_parse_test() ->
                                    attributes = [
                                         {"x-qt-text-an.",   "Test Broadcast"},
                                         {"x-qt-text-ua.",   "Trent Clarke"},
-                                        {"range",           "npt=now-"}, 
                                         {"isma-compliance", "2,2.0,2"} ],
                                    streams = [Auds, Vids],
                                    rtp_map = [{96, AudsRtp}, {97, VidsRtp}],
