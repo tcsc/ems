@@ -7,7 +7,7 @@ start() ->
 
               % ems tests
               url_tests,
-              sdp_tests], 
-
+              sdp_tests, 
+              plist_tests],
 
               [verbose]).
