@@ -61,7 +61,7 @@ stop(_State) ->
   gen_server:cast(ems_server, stop).
 
 %% ----------------------------------------------------------------------------
-%% @doc Creates a new session and registers it with the path
+%% @doc Creates a new session and registers it at the supplied path
 %% @end 
 %% ----------------------------------------------------------------------------
 -spec create_session(Config   :: config:handle(),
@@ -77,8 +77,11 @@ create_session(Config, Path, UserInfo, Desc, _Options) ->
         true -> 
           ?LOG_DEBUG("ems_server:create_session/5 - user has broadcast rights for \"~s\"", [Path]),
           {ok, Session} = ems_session:new(Path, Desc),
-          {ok, Session};
-          
+          Channels = ems_session:collect_channels(Path, Session); %,
+%          case register_session(Path, Session, Channels) of
+%             ok -> {ok, Session};
+%             {error, Err} -> Err                
+%          end;
         false -> 
           not_authorised
       end;

@@ -1,10 +1,8 @@
 -module(ems_session).
-%-behavior(gen_server).
+-behavior(gen_server).
 -include("logging.hrl").
 -include ("sdp.hrl").
 -include("rtsp.hrl").
-
-
 
 %% ============================================================================
 %% Definitions
@@ -17,43 +15,60 @@
 -record(client, {id, subscriptions = []}).
 -record(subscription, {pid, path}).
 	
--export([
-  new/2,
-  start_link/3,
-  receive_rtsp_request/5]).
-  
--export([start_session/1]).
+-export([start/2, start_link/2]).
 
 -type session() :: pid().
 -export_type([session/0]).
 -opaque_type([session/0]).
 
 %% ============================================================================
+%% gen_server callbacks
+%% ============================================================================
+-export([
+  init/1, 
+  handle_call/3, 
+  handle_cast/2, 
+  handle_info/2, 
+  terminate/2, 
+  code_change/3 ]).
+
+%% ============================================================================
 %% Exports
 %% ============================================================================
 
--spec new(Path :: string(), Description :: sdp:session_description()) -> {'ok', session()}.
-new(Path, Description) -> 
+-spec start(Path :: string(), Description :: sdp:session_description()) -> {'ok', session()}.
+start(Path, Description) -> 
   ?LOG_DEBUG("session:new/2 - Creating session for ~s", [Path]),
   State = #state{path = Path, description = Description},
-  {ok, self()}.
+  {ok, gen_server:start(?MODULE, State, [])}.
 
 %% ----------------------------------------------------------------------------
 %% @doc Starts a new session and returns the new session's process identifier.
 %% @end
 %% ----------------------------------------------------------------------------
--spec start_link(Id::integer(), Path::string(), OwnerPid::pid()) -> pid().
-start_link(Id, Path, OwnerPid) ->
+-spec start_link(Id::integer(), Path::string()) -> pid().
+start_link(Id, Path) ->
   ?LOG_DEBUG("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
   State = #state{id = Id, path = Path},
-  {ok, erlang:spawn_link(?MODULE, start_session, [State])}
-  .
-  
+  {ok, gen_server:start_link(?MODULE, State, [])}.
+
 %% ----------------------------------------------------------------------------
-%% @spec The public interface for passing a request on to the session
-%% ----------------------------------------------------------------------------  
-receive_rtsp_request(SessionPid, Request, Headers, Body, ConnectionPid) ->
-  SessionPid ! {self(), {rtsp_request, Request, Headers, Body, ConnectionPid}}.
+%% @doc Collects the streams inside the session and returns them to the caller, 
+%%      together with their addresses.
+%% @end
+%% ----------------------------------------------------------------------------
+
+%% a collected channel and its address (i.e. path)
+-type named_channel() :: {string(), any()}.
+-spec collect_channels(Session :: session(), Path :: string()) -> [named_channel()].
+collect_channels(Session, Root) ->
+  Channels = gen_server:call(Session, collect_channels),
+  F = fun(Ch) -> 
+        Path = ems_channel:path(Ch),
+        Addr = url:join_path(Root, Path),
+        {Addr, Ch}
+      end,
+  plists:parallel_map(F, Channels).
 
 %% ----------------------------------------------------------------------------
 %%
@@ -61,197 +76,31 @@ receive_rtsp_request(SessionPid, Request, Headers, Body, ConnectionPid) ->
 stop(SessionPid) ->
   SessionPid ! {self(), stop_ems_session}.
 
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------
-start_session(State) ->
-  ?LOG_DEBUG("ems_session:start_session/1 - starting session...", []),
-  process_flag(trap_exit, true),
-  session_loop(State).
+%% ============================================================================
+%% gen_server callbacks
+%% ============================================================================
 
 %% ----------------------------------------------------------------------------
 %%
-%% ----------------------------------------------------------------------------  
-session_loop(State) ->
-  receive
-    {From, {rtsp_request, Request, Headers, Body, ConnectionPid}} ->
-      NewState = handle_rtsp_request(Request, Headers, Body, ConnectionPid, State),
-      session_loop(NewState);
-      
-    {From, stop_ems_session} ->
-      ok;
-      
-    Message ->
-      ?LOG_DEBUG("ems_session:session_loop/1 - unexpected message ~p", [Message]),
-      session_loop(State)
-  end.
-  
-%% ============================================================================
-%% Server Callbacks
-%% ============================================================================
-
-init({Id, Path, OwnerPid}) ->
-  ?LOG_DEBUG("ems_session:init/3 - ~s", [Path]),
-  process_flag(trap_exit, true),
-  State = #state{id=Id, path=Path},
-  {ok, State}.
-
-%% ----------------------------------------------------------------------------
-%%
-%% ----------------------------------------------------------------------------
-handle_rtsp_request(Request, Headers, Body, Connection, State) ->
-  ?LOG_DEBUG("ems_session:handle_cast/2 - Handling RTSP request", []),
-
-  Method = Request#rtsp_request.method,
-  Sequence = Headers#rtsp_message_header.sequence,
-  try
-    NewState = handle_request(Method, Sequence, Request, Headers, Body, 
-      Connection, State),
-    NewState
-  catch
-    ems_session:Error -> 
-      rtsp_connection:send_server_error(Connection, Error, Sequence),
-      State
-  end.
-  
-%% ============================================================================
-%% Internal functions
-%% ============================================================================
-
 %% ----------------------------------------------------------------------------    
-%% @doc Handles an RTSP request 
-%% @throws {ems_session | Reason} where Reason = bad_requset.
-%% @spec handle_request(Method, Sequence, Request, Headers, Body, 
-%%         Connection, State) -> NewState
-%% @end
+init(State) -> {ok, State}.
+
 %% ----------------------------------------------------------------------------
-handle_request(announce, Sequence, Request, Headers, Body, Connection, State) ->
-  {_,_,_,_, ContentType} = rtsp:get_request_info(Request,Headers),
-  
-  if
-    ContentType /= "application/sdp" ->
-      throw({ems_session, bad_request});
-      
-    true ->
-      SessionDescription = sdp:parse(Body),
-      {ok, Channels} = create_channels(SessionDescription),
-      NewState = State#state{description=SessionDescription, channels=Channels},
-      rtsp_connection:send_response(Connection, Sequence, ok, [], <<>>),
-      NewState
-  end;
-  
-handle_request(describe, Sequence, Request, Headers, _Body, Connection, State) ->
-  ?LOG_DEBUG("ems_session:handle_request/7 - DESCRIBE", []),
-  ResponseBody = sdp:format( State#state.description ),
-  rtsp_connection:send_response(Connection, Sequence, ok, [], ResponseBody),  
-  State;
-
-handle_request(setup, Sequence, Request, Headers, _Body, Connection, State) ->
-  ?LOG_DEBUG("ems_session:handle_request/7 - SETUP", []),
-  
-  Uri = Request#rtsp_request.uri,
-  {_,_,_,Path} = url:parse(Uri),
-  SessionPath = State#state.path,
-  StreamName = string:substr(Path, length(SessionPath)+2),
- 
-  % look for the client's transport header 
-  case rtsp:get_header(Headers, ?RTSP_HEADER_TRANSPORT) of
-    ClientHeader when is_list(ClientHeader) ->
-
-      % Parse transport header and use the parsed data to try and set up the
-      % stream
-      ClientTransport = rtsp:parse_transport(ClientHeader),
-      ClientAddress = rtsp_connection:get_client_address(Connection),
-      
-      {SessionId, ServerTransport, NewState} = 
-        setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State),
-      ServerHeader = rtsp:format_transport(ServerTransport),
-      ServerHeaders = [
-        {?RTSP_HEADER_TRANSPORT, ServerHeader},
-        {?RTSP_HEADER_SESSION, SessionId}],
-      rtsp_connection:send_response(Connection, Sequence, ok, ServerHeaders, <<>>),
-      NewState;
-       
-    undefined ->
-      % No transport header in the setup request (or the transport header is 
-      % something other than a string). That's very bad, and the client should
-      % be punished. 
-      throw({ems_session, bad_request})
-  end;
-
-handle_request(record, Sequence, Request, Headers, <<>>, Connection, State) ->
-  ?LOG_DEBUG("ems_session:handle_request/7 - RECORD", []),
-  
-  Uri = Request#rtsp_request.uri,
-  {_,_,_,Path} = url:parse(Uri),
-  SessionPath = State#state.path,
-
-  Client = get_client(Headers, State),
-  case SessionPath of
-    Path -> 
-      F = fun( S ) ->
-        Handler = S#subscription.pid,
-        P =  S#subscription.path,
-      
-        ?LOG_DEBUG("ems_session:handle_request/7 - Enabling  subscription on ~s", 
-          [P]),
-        Handler ! enable,
-    
-        RtpInfoValue = io_lib:format("uri=~s/~s", [Uri, P]),
-        lists:flatten(RtpInfoValue)
-      end,
+%%
+%% ----------------------------------------------------------------------------
+handle_call({collect_channels, Root}, _From, State) -> 
+  {reply, State#state.channels, State};
         
-      UrlList = lists:map(F, Client#client.subscriptions),
-        
-      SessionId = stringutils:int_to_string(Client#client.id),
-      ResponseHeaders = [
-        {?RTSP_HEADER_RTP_INFO, string:join(UrlList, ",")},
-        {?RTSP_HEADER_RANGE, "npt=now-"}, 
-        {?RTSP_HEADER_SESSION, SessionId}
-      ],
-      rtsp_connection:send_response(Connection, Sequence, ok, ResponseHeaders, <<>>);
-    
-    _ -> 
-      _StreamName = string:substr(Path, length(SessionPath)+2)
-  end,
-  State;
-  
-handle_request(teardown, Sequence, Request, Headers, Body, Connection, State) ->
-  ?LOG_DEBUG("ems_session:handle_request/7 - TEARDOWN", []),
-  
-  Uri = Request#rtsp_request.uri,
-  {_,_,_,Path} = url:parse(Uri),
-  SessionPath = State#state.path,
-  
-  Client = get_client(Headers, State),
-  NewState = case SessionPath of
-    Path -> 
-      F = fun(S) -> 
-        Handler = S#subscription.pid,
-        Handler ! stop
-      end,
-      lists:map(F, Client#client.subscriptions),
-      Clients = dict:erase(Client#client.id, State#state.clients),
-      State#state{clients = Clients};
-        
-    _ -> ok
-  end,
-  
-  if
-    Client#client.id == State#state.id ->
-      ?LOG_DEBUG("ems_session:handle_request/7 - TEARDOWN - broadcasting session", []),
-      stop(self());
-      
-    true -> ok
-  end,
-  
-  rtsp_connection:send_response(Connection, Sequence, ok, [], <<>>),
-  NewState;
+handle_call(_Request, _From, State) -> {noreply, State}.
 
-handle_request(_Method, Sequence, _Request, _Headers, <<>>, Connection, State) ->
-  rtsp_connection:send_response(Connection, Sequence, not_implemented, [], <<>>),
-  State.
-  
+handle_cast(_Request, State) -> {noreply, State}.
+
+handle_info(_Msg, State) -> {noreply, State}.
+
+terminate(_Reason, State) -> {noreply, State}.
+
+code_change(_OldVersion, State, _Extra) -> {ok, State}.
+
 %% ----------------------------------------------------------------------------
 %% @doc Creates RTP distribution channels for each stream in the session
 %%      description.
