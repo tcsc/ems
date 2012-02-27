@@ -1,6 +1,4 @@
 -module(rtsp).
--behaviour(application).
--behaviour(supervisor).
 -include("rtsp.hrl").
 -include("logging.hrl").
 
@@ -8,17 +6,10 @@
 %% Exports
 %% ============================================================================
 
-% application callbacks
--export([start/2, stop/1]).
-
-% supervisor callbacks
--export([init/1]).
-
 % public API
 -export([
   add_listener/3,
   start/0,
-  start_link/0,
   parse_message/1,
   format_message/3,
   format_transport/1,
@@ -67,70 +58,6 @@ start() ->
   ?LOG_INFO("rtsp:start/1 - Starting RTSP Server application", []),
   application:start(listener),
   application:start(rtsp).
-  
-%% @doc Called by the application framework to start the RTSP server 
-%%      application.
-%% @private
-%% @end
-start(normal,_) ->
-  rtsp:start_link().
-
-%% @doc Called by the application framework to stop the RTSP server 
-%%      application. Explicitly kills the supervisor's children and 
-%%      removes their specifications from the supervisor's child 
-%%      list.
-%% @todo Work out what to do about the supervisor itself.
-%% @private
-%% @end  
-stop(_) -> 
-  Stop = fun({Id, _Pid, _, _}) ->
-    supervisor:terminate_child(rtsp_sup, Id),
-    supervisor:delete_child(rtsp_sup, Id)
-  end,
-  lists:foreach(Stop, supervisor:which_children(rtsp_sup)).
-
-%% @doc Called by the appliction entry point to start the RTSP supervisor 
-%%      process
-%% @private
-%% @end
--spec start_link() -> {ok, pid()} | {error, any()}.
-start_link() -> 
-  case supervisor:start_link({local, rtsp_sup}, ?MODULE, []) of
-    {ok, Pid} -> 
-      ?LOG_DEBUG("rtsp:start_link/0 - RTSP supervisor started on ~w", [Pid]),
-      {ok, Pid};
-      
-    {error, Err} -> 
-      ?LOG_ERROR("rtsp:start_link/0 - RTSP supervisor failed to start ~w", [Err]),
-      {error, Err}
-  end.
-
-%% ============================================================================
-%% Supervisor callbacks
-%% ============================================================================
-
-%% @doc Returns a child spec list for the supervisor process to use.
-%% @private
-%% @end
-init(_) -> 
-  RtspServer = {
-    rtsp_server,
-    {rtsp_server, start_link, []},
-    permanent,
-    brutal_kill,
-    worker,
-    [rtsp_server]
-  },
-  DigestServer = {
-    digest_server,
-    {rtsp_digest_server, start_link, []},
-    permanent,
-    brutal_kill,
-    worker,
-    [rtsp_digest_server]
-  },
-  {ok, {{one_for_one, 10, 1}, [DigestServer, RtspServer]}}.
-
 
 %% ============================================================================
 %% Public API
