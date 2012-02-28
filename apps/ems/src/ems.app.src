@@ -1,0 +1,10 @@
+{application, ems, 
+ [
+  {description, "The main Erlang Media Server Application"},
+  {vsn, "0.1"},
+  {modules, []},
+  {applications, [kernel, stdlib, listener, utils]},
+  {registered, []},
+  {mod, { ems_app, []}},
+  {env, []}
+ ]}.

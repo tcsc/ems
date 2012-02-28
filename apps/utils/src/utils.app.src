@@ -1,0 +1,9 @@
+{application, utils,
+ [
+  {description, "Common utility code for the EMS project"},
+  {vsn, "0.1"},
+  {modules, []},
+  {applications, [kernel, stdlib]},
+  {registered, []},
+  {env, []}
+ ]}.
