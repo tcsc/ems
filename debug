@@ -1,0 +1,2 @@
+./rebar compile
+erl -smp enable -pa apps/utils/ebin -pa apps/listener/ebin -pa apps/rtsp/ebin -pa apps/ems/ebin -run appmon -run debugger
