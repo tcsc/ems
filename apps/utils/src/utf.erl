@@ -16,10 +16,9 @@ utf8_to_string(Utf8) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Converts a raw text buffer into a UTF-8 buffer.
-%% @spec string_to_utf8(Text) -> binary()
-%%       Text = string()
 %% @end
 %% ----------------------------------------------------------------------------
+-spec string_to_utf8(string()) -> binary().
 string_to_utf8(Text) ->
   string_to_utf8(Text, []).
 
@@ -67,9 +66,9 @@ utf8_to_string(<<>>, Text) ->
 %% ----------------------------------------------------------------------------
 %% @doc Implements the back end of the Erlang-style string to UTF-8 conversion,
 %%      building the text string code point by code point. 
-%% @spec utf8_to_string(Utf8,Text) -> string()
 %% @end
-%% ----------------------------------------------------------------------------	
+% ----------------------------------------------------------------------------	
+-spec string_to_utf8(string(), [char()]) -> binary(). 
 
 % End of input. Reverse the list, convert it to a binary and return it 
 string_to_utf8([], Utf8) ->

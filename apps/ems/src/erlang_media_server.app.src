@@ -1,4 +1,4 @@
-{application, ems, 
+{application, erlang_media_server, 
  [
   {description, "The main Erlang Media Server Application"},
   {vsn, "0.1"},

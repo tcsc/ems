@@ -21,7 +21,7 @@ start() ->
 	application:start(utils),
   application:start(listener),
 	application:start(rtsp),
-	application:start(ems).
+	application:start(erlang_media_server).
 	
 %% ----------------------------------------------------------------------------
 %% @doc Called to shut down the media server application

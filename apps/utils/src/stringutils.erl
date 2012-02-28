@@ -12,14 +12,14 @@
   unquote/1]).
 
 %% ----------------------------------------------------------------------------
-%% @doc
-%% @spec extract_token(Bin, Offset, Separator, Results) -> Result
-%%       Bin = binary()
-%%       Offset = int
-%%       Separator = 
-%%       Results = [Temp]
+%% @doc Extracts a series of bytes from a binary, staring at a given offset up
+%%      to (but not including) a given delimiter. Returns a list contianing the 
+%%      bytes before the delimiter, and the offset of the delimiter itself.
 %% @end
 %% ----------------------------------------------------------------------------
+-spec extract_token(binary(), integer(), byte()) -> 
+        {Token :: [byte()], NewOffset :: integer()}.
+        
 extract_token(Bin, Offset, Separator) ->
 	extract_token(Bin, Offset, Separator, []).
 	
@@ -30,7 +30,7 @@ extract_token(Bin, Offset, Separator, Result) ->
 			{lists:reverse(Result), Offset};
 		
 		<<_:Offset/binary, N:8, _/binary>> ->
-			% not found yet - go arount again
+			% not found yet - go around again
 			extract_token(Bin, Offset+1, Separator, [N|Result]);
 			
 		_ ->
@@ -45,6 +45,7 @@ extract_token(Bin, Offset, Separator, Result) ->
 %%       String = string()
 %%       Default = term()
 %%       Result = integer() | Default
+%% @end
 %% ----------------------------------------------------------------------------
 to_int_def(String, Default) ->
   try
@@ -55,13 +56,9 @@ to_int_def(String, Default) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Splits a string on the first occurrence of a character
-%% @spec split_on_first(Char,String) -> {Prefix,Suffix}
-%%      Char = 
-%%      String =  
-%%      Prefix =
-%%      Suffix = 
 %% @end
 %% ----------------------------------------------------------------------------
+-spec split_on_first(char(),string()) -> {Prefix :: string(), Suffix :: string()}.
 split_on_first(Char, String) ->
   case index_of(Char, String) of
     0 -> {String, []};
@@ -73,19 +70,19 @@ split_on_first(Char, String) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Splits a string on the last occurrence of a character
-%% @spec split_on_last(Char,String) -> {Prefix,Suffix}
 %% @end
 %% ----------------------------------------------------------------------------
+-spec split_on_last(char(),string()) -> {Prefix :: string(), Suffix :: string()}.
 split_on_last(Char, String) ->
   {A,B} = split_on_first(Char, lists:reverse(String)),
   {lists:reverse(B), lists:reverse(A)}.
 
 %% ----------------------------------------------------------------------------
-%% @doc Returns the index of the first occurrence of Char in String.
-%% @spec index_of(Char,String) -> 0 | Index
-%%       Index = integer() when > 0
+%% @doc Returns the index of the first occurrence of Char in String. Returns 0 
+%%      if the specified character is not found. 
 %% @end
 %% ----------------------------------------------------------------------------
+-spec index_of(char(), string()) -> integer().
 index_of(Char, String) ->
   index_of(1, Char, String).
   
@@ -106,10 +103,9 @@ unquote(Text) ->
   string:join(Parts, []).
 
 %% ----------------------------------------------------------------------------
-%% @spec int_to_string(Value) -> Result
-%%         Value = int()
-%%         Result = string()
+%% @doc Formats an integer as a string
 %% @end
 %% ----------------------------------------------------------------------------  
+-spec int_to_string(integer()) -> string().
 int_to_string(Value) ->
   lists:flatten(io_lib:format("~p", [Value])).
