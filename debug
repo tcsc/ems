@@ -1,2 +1,2 @@
 ./rebar compile
-erl -smp enable -pa apps/utils/ebin -pa apps/listener/ebin -pa apps/rtsp/ebin -pa apps/ems/ebin -run appmon -run debugger
+erl -smp enable -pa deps/log4erl/ebin deps/mochiweb/ebin -pa -pa apps/utils/ebin -pa apps/listener/ebin -pa apps/rtsp/ebin -pa apps/ems/ebin -run appmon -run debugger

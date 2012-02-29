@@ -4,4 +4,5 @@ syntax: glob
 *.swp
 *.plt
 doc/*
+deps/*
 .DS_Store
