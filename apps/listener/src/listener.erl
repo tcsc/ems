@@ -2,8 +2,6 @@
 -author('Trent Clarke <trent.clarke@gmail.com>').
 -behaviour(supervisor).
 
--include("logging.hrl").
-
 %% ============================================================================
 %% External Exports
 %% ============================================================================
@@ -40,14 +38,14 @@
 %% ----------------------------------------------------------------------------
 -spec start_link() -> {'ok', pid()} | 'ignore' | {'error', any()}.
 start_link() ->
-	?LOG_DEBUG("listener:start_link/0 - Starting Listener Supervisor", []),
+	log4erl:info("listener:start_link/0 - Starting Listener Supervisor", []),
 	case supervisor:start_link({local, ?LISTENER_PROC}, ?MODULE, []) of
 		{ok, Pid} -> 
-			?LOG_DEBUG("listener:start_link/0 - Listener Supervisor started on ~w", [Pid]),
+      log4erl:info("listener:start_link/0 - Listener Supervisor started on ~w", [Pid]),
 			{ok, Pid};
 			
 		E ->
-		  ?LOG_ERROR("listener:start_link/0 - Listener Supervisor failed to start ~w", [E]),
+		  log4erl:fatal("listener:start_link/0 - Listener Supervisor failed to start ~w", [E]),
 			E
 	end.
 
@@ -59,7 +57,7 @@ stop() -> ok.
 %% ----------------------------------------------------------------------------
 -spec add(inet:ip_address(), integer(), accept_callback()) -> {'ok', listener()} | {'error', any()}.
 add(LocalAddress, Port, Callback) -> 
-	?LOG_DEBUG("listener:add_listener/3 - starting listener for ~w:~w", [LocalAddress, Port]),
+	log4erl:debug("listener:add_listener/3 - starting listener for ~w:~w", [LocalAddress, Port]),
 	Text = io_lib:format("listener_~w:~w", [LocalAddress,Port]),
 	Name = Name = list_to_atom(lists:flatten(Text)),
 	State = #listener_state{name=Name, ip=LocalAddress, port=Port, callback=Callback},
@@ -77,16 +75,16 @@ add(LocalAddress, Port, Callback) ->
 			{ok, {Id, Pid}};
 		
 		{error, Err} ->
-		  ?LOG_ERROR("listener:add_listener/3 - failed to start listener: ~w", [Err]), 
+		  log4erl:error("listener:add_listener/3 - failed to start listener: ~w", [Err]), 
 		  {error, Err}
 	end.
 	
 -spec remove(listener()) -> ok.
 remove({Id, _Pid}) ->
-	?LOG_DEBUG("listener:remove/2 - terminating listener ~w", [Id]),
+	log4erl:debug("listener:remove/2 - terminating listener ~w", [Id]),
 	supervisor:terminate_child(?LISTENER_PROC, Id),
 	
-	?LOG_DEBUG("listener:remove/2 - deleting listener child spec", []),
+	log4erl:debug("listener:remove/2 - deleting listener child spec", []),
 	supervisor:terminate_child(?LISTENER_PROC, Id),
 	ok.
 	
@@ -99,21 +97,21 @@ remove({Id, _Pid}) ->
 %% @end  
 %% ----------------------------------------------------------------------------
 init(_Args) ->
-	?LOG_DEBUG("listener:init/1 - ~w", [_Args]),
+	log4erl:debug("listener:init/1 - ~w", [_Args]),
 	{ok, {{one_for_one, 10, 1}, []}}.
 
 %% ----------------------------------------------------------------------------		
 %% @spec init_listener(State) -> {ok,Pid} | {error, Reason}.
 %% ----------------------------------------------------------------------------	
 init_listener(State) ->
-	?LOG_DEBUG("listener:init_listener/1",[]),
+	log4erl:debug("listener:init_listener/1",[]),
 	case proc_lib:start_link(?MODULE, run_listener, [State]) of
 		{ok,Pid} ->
-			?LOG_DEBUG("listener:init_listener/1 - started listener on ~w",[Pid]),
+      log4erl:debug("listener:init_listener/1 - started listener on ~w",[Pid]),
 			{ok, Pid};
 			
 		{error, Reason} ->
-			?LOG_DEBUG("listener:init_listener/1 - listener starup failed ~w",[Reason]), 
+      log4erl:error("listener:init_listener/1 - listener starup failed ~w",[Reason]), 
 			{error, Reason}
 	end.
 
@@ -123,7 +121,7 @@ init_listener(State) ->
 %% @end
 %% ----------------------------------------------------------------------------
 run_listener(State = #listener_state{ip=Address, port=Port}) ->
-	?LOG_DEBUG("listener:run_listener/1 - entering new listener process", []),
+	log4erl:debug("listener:run_listener/1 - entering new listener process", []),
 	
 	TcpOptions = [
 		binary,
@@ -142,7 +140,7 @@ run_listener(State = #listener_state{ip=Address, port=Port}) ->
 			accept(NewState);
 			
 		{error, Reason} ->
-			?LOG_DEBUG("listener:run_listener/1 - listen failed ~w", [Reason]),
+      log4erl:error("listener:run_listener/1 - listen failed ~w", [Reason]),
 			throw({Reason, Port})
 	end.
 
@@ -155,11 +153,10 @@ accept(State = #listener_state{socket=Socket, callback=Callback}) ->
 	case gen_tcp:accept(Socket) of
 		{ok, NewConnection} ->
 			{ok, {RemoteAddr, Port}} = inet:peername(NewConnection),
-			?LOG_DEBUG("listener:accept/1 - new connection from ~w:~w", [RemoteAddr, Port]),			
-			Callback(NewConnection, {RemoteAddr, Port}),
+      log4erl:debug("listener:accept/1 - new connection from ~w:~w", [RemoteAddr, Port]),
 			accept(State);
 			
 		{error, Reason} ->
-			?LOG_ERROR("listener:accept/1 - accept on ~w failed ~w)", [Socket, Reason]),
+      log4erl:error("listener:accept/1 - accept on ~w failed ~w)", [Socket, Reason]),
 			accept(State)
 	end.

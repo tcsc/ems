@@ -18,7 +18,10 @@
 
 start() ->
 	?LOG_INFO("Starting EMS application", []),	
-	application:start(utils),
+  application:start(log4erl),
+  log4erl:add_console_appender("Console", {debug, "[%L]~t- %l%n"}),
+
+  application:start(utils),
   application:start(listener),
 	application:start(rtsp),
 	application:start(erlang_media_server).
