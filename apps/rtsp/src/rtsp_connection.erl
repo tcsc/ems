@@ -1,7 +1,6 @@
 -module(rtsp_connection).
 -behaviour(gen_fsm).
 
--include("logging.hrl").
 -include("rtsp.hrl").
 
 %% ============================================================================
@@ -61,7 +60,7 @@
 -spec new(rtsp:svr(), string(), rtsp:request_callback()) -> 
   {'ok', rtsp:conn()} | {'error', any()}.
 new(_Owner, ServerStr, Callback) -> 
-  ?LOG_DEBUG("rtsp_connection:new/1", []),
+  log:debug("rtsp_connection:new/1", []),
   State = #state{ server_str       = ServerStr,
                   pending_data     = << >>,
                   pending_requests = dict:new(),
@@ -73,10 +72,10 @@ close(Conn) ->
   gen_fsm:sync_send_all_state_event(Conn, quit).
 
 take_socket(Conn, Socket) ->
-  ?LOG_DEBUG("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", [Conn]),
+  log:debug("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", [Conn]),
   ok = gen_tcp:controlling_process(Socket, Conn),
   
-  ?LOG_DEBUG("rtsp_connection:take_socket/2- forwarding socket to connection", []),
+  log:debug("rtsp_connection:take_socket/2 - forwarding socket to connection"),
   gen_fsm:send_event(Conn, {socket, Socket}),
   ok.
 
@@ -87,7 +86,7 @@ get_client_address(Conn) ->
 %% gen_fsm API
 %% ============================================================================
 init(State) -> 
-  ?LOG_DEBUG("rtsp_connection:init/1", []),
+  log:debug("rtsp_connection:init/1", []),
   {ok, waiting_for_socket, State}.
 
 %% ----------------------------------------------------------------------------
@@ -98,7 +97,7 @@ init(State) ->
 %%                {stop,Reason,NewStateData}
 %% ----------------------------------------------------------------------------
 handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, State) ->
-  ?LOG_DEBUG("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
+  log:debug("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
     [Sequence, Status]),
 
   StateP = case deregister_pending_request(Sequence, State) of 
@@ -114,16 +113,17 @@ handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, S
   {next_state, StateName, StateP};
 
 handle_event(_Event, StateName, StateData) -> 
+  log:debug("rtsp_connection:handle_event/3 - ~w", [StateName]),
   {next_state, StateName, StateData}.
 
 %% ----------------------------------------------------------------------------
 %% @doc Handles process events
-%% @spec
-%% @end
 %% ----------------------------------------------------------------------------
 handle_info({tcp, Socket, Data}, 
             State, 
             StateData = #state{pending_data = PendingData}) ->
+  log:trace("rtsp_connection:handle_info/3"),
+
   % combine the newly-arrived data with the stuff leftover from the last reqest
   AccumulatedData = list_to_binary([PendingData, Data]),
   
@@ -140,33 +140,38 @@ handle_info({tcp, Socket, Data},
   {next_state, NewState, NewNewStateData};
 
 handle_info({tcp_closed, _Socket}, _StateName, State) ->
-  ?LOG_DEBUG("rtsp_connection:handle_info/3 - tcp connection closed",[]),
+  log:debug("rtsp_connection:handle_info/3 - tcp connection closed",[]),
   {stop, normal, State};
 
 handle_info({sender_waiting, _SendingPid}, StateName, StateData) ->
+  log:debug("rtsp_connection:handle_info/2 - sender waiting"),
   {next_state, StateName, StateData};
 
 handle_info(Info, StateName, StateData) ->
-  ?LOG_DEBUG("rtsp_connection:handle_info/3 ~w, ~w, ~w", [Info, StateName, StateData]),
+  log:debug("rtsp_connection:handle_info/3 ~w, ~w, ~w", [Info, StateName, StateData]),
   {next_state, StateName, StateData}.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
 handle_sync_event(get_client_address, _From, StateName, State) ->
+  log:debug("rtsp_connection:handle_sync_event/4"),
   {ok, {Host, _}} = inet:sockname(State#state.socket),
   {reply, Host, StateName, State};
   
 handle_sync_event(quit, _, _, State) ->
+  log:debug("rtsp_connection:handle_sync_event/4 - quit"),
   {stop, normal, ok, State};
 
 handle_sync_event(_Event, _From, StateName, StateData) -> 
+  log:debug("rtsp_connection:handle_sync_event/4 - ~w", [_Event]),
   {next_state, StateName, StateData}.
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-terminate(_Reason, _StateName, State) -> 
+terminate(_Reason, _StateName, State) ->
+  log:debug("rtsp_connection:terminate/3 - ~w", [_Reason]),
   Sender = State#state.sender,
   stop_sender(Sender),
   ok.
@@ -193,25 +198,24 @@ send_response(Conn, Sequence, Status, ExtraHeaders, Body) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @spec waiting_for_socket(Event,SenderPid,State) -> 
+%%
 %% ----------------------------------------------------------------------------
 waiting_for_socket({socket, Socket}, State) -> 
-  ?LOG_DEBUG("rtsp_connection:wating_for_socket/2 - got socket", []),
-  inet:setopts(Socket, [{active,once}]),
+  log:debug("rtsp_connection:waiting_for_socket/2 - got socket"),
+  ok = inet:setopts(Socket, [{active,once}]),
   Sender = start_sender(self(), Socket),
   NewState = State#state{socket=Socket, sender=Sender},
   {next_state, ready, NewState};
   
 waiting_for_socket(Message, State) -> 
-  ?LOG_DEBUG("rtsp_connection:wating_for_socket/2 - ~w, ~w", [Message, State]),
+  log:debug("rtsp_connection:waiting_for_socket/2 - ~w, ~w", [Message, State]),
   {next_state, waiting_for_socket, State}.
 
 %% ----------------------------------------------------------------------------
-%% @spec ready() -> {next_state,NewStateName,NewStateData}
-%% @end
+%%
 %% ----------------------------------------------------------------------------
 ready(Event, State) ->
-  ?LOG_DEBUG("rtsp_connection:ready/2 - ~w, ~w", [Event, State]),
+  log:debug("rtsp_connection:ready/2 - ~w, ~w", [Event, State]),
   {next_state, ready, State}. 
 
 %% ============================================================================
@@ -268,31 +272,28 @@ handle_data(Data, StateData, ready) ->
       {ok, ready, StateData, Data}
   end;
 
-handle_data(Data, StateData, reading_body) ->
-  Msg = StateData#state.pending_message,
+handle_data(Data, State, reading_body) ->
+  Msg = State#state.pending_message,
   ContentLength = rtsp:message_content_length(Msg),
   
-  DataSize = size(Data),
-  
-  if 
-    ContentLength =< DataSize ->
-      if  
-        ContentLength < size(Data) ->
-          {Body, Remainder} = split_binary(Data, ContentLength);
-  
-        ContentLength =:= size(Data) ->
-          {Body, Remainder} = {Data, << >>}
-      end,
+  {Body, Remainder} = 
+    case size(Data) of 
+      Len when Len =:= ContentLength -> {Data, << >>};
+      Len when Len < ContentLength -> split_binary(Data, ContentLength);
+      _ -> {<< >>, Data}
+    end,
 
+  case Body of
+    << >> -> {ok, reading_body, State, Data};
+    _ -> 
       MsgP = Msg#rtsp_message{body = Body},
-      NewState = dispatch_message(MsgP, StateData#state{pending_message = undefined}),
-      handle_data(Remainder, NewState, ready);
-    
-    true ->  {ok, reading_body, StateData, Data}
+      StateP = dispatch_message(MsgP, State#state{pending_message = undefined}),
+      handle_data(Remainder, StateP, ready)
   end;
 
 % the generic handle data
 handle_data(Data, StateData, _State) ->
+  log:trace("rtsp_connection:handle_data/3 - ~w ~w", [StateData,_State]),
   {ok, ready, StateData, Data}.
 
 %% ============================================================================
@@ -310,7 +311,7 @@ dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
     rtsp_request ->
       {Method, Uri, Seq, _, _} = rtsp:get_request_info(Msg),
     
-      ?LOG_DEBUG("rtsp_connection:dispatch_message/2 - handling #~w ~s ~s",
+      log:debug("rtsp_connection:dispatch_message/2 - handling #~w ~s ~s",
         [Seq,Method,Uri]),
   
       StateP   = register_pending_request(Seq, Msg, State),
@@ -341,7 +342,7 @@ dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
 %% @end
 %% ----------------------------------------------------------------------------
 send_server_error(Pid, Reason, Sequence) when is_list(Reason) ->
-  ?LOG_DEBUG("rtsp_connection:send_server_error/3 - ~w", [Reason]),
+  log:debug("rtsp_connection:send_server_error/3 - ~w", [Reason]),
   Message = lib_io:format("Error ~w", [Reason]),
   Body = utf:string_to_utf8(Message),
   Headers = [{content_type, "text/plain; charset=utf-8"}],
@@ -402,7 +403,7 @@ build_response_headers(Sequence, ContentLength, Headers) ->
   }.  
   
 %% ============================================================================
-%% Utilility functions
+%% Utility functions
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
@@ -456,17 +457,17 @@ with_authenticated_user_do(Conn, Request, PwdCallback, Action) ->
                  end,
       UserName = rtsp_authentication:get_user_name(AuthInfo),
       
-      ?LOG_DEBUG("rtsp_connection:with_authenticated_user_do/4 - authenticating user \"~s\"", 
+      log:debug("rtsp_connection:with_authenticated_user_do/4 - authenticating user \"~s\"", 
         [UserName]),
       case PwdCallback(UserName) of
         false ->
-          ?LOG_DEBUG("rtsp_connection:with_authenticated_user_do/4 - no such user \"~s\"", [UserName]), 
+          log:debug("rtsp_connection:with_authenticated_user_do/4 - no such user \"~s\"", [UserName]), 
           throw({unauthorized, no_such_user});
           
         {ok, UserInfo} -> 
           case rtsp_authentication:validate(Conn, Request, AuthInfo, UserInfo) of
             ok ->
-              ?LOG_DEBUG("rtsp_connection:with_authenticated_user_do/4 - authenticated", []),
+              log:debug("rtsp_connection:with_authenticated_user_do/4 - authenticated", []),
               Action(UserInfo), 
               ok;
               

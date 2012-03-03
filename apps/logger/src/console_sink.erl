@@ -4,15 +4,43 @@
 -include("logger.hrl").
 
 %% gen_event exports ----------------------------------------------------------
--export([init/1, handle_event/2, handle_call/2, handle_info/2, terminate/2, code_change/3]).
+-export([init/1,
+         handle_event/2,
+         handle_call/2, 
+         handle_info/2,
+         terminate/2, 
+         code_change/3]).
 
 %% ============================================================================
 %% Public API
 %% ============================================================================
-init(_) -> {ok, {}}.
 
+%% --------------------------------------------------------------------------
+%% @doc Receives a logging message from the log server and writes it out to 
+%%      the console.
+%% --------------------------------------------------------------------------
+init(Options) -> 
+  LogLevel = case lists:keyfind(log_level, 1, Options) of
+                {log_level, L} -> log:level_to_int(L);
+                false -> ?LOG_LEVEL_TRACE
+             end,
+  Stream = case lists:keyfind(stream, 1, Options) of
+                {stream, S} -> S;
+                false -> standard_io
+           end,
+ {ok, {LogLevel, Stream}}.
+
+%% --------------------------------------------------------------------------
+%% @doc Receives a logging message from the log server and writes it out to 
+%%      the console.
+%% --------------------------------------------------------------------------
 handle_event(_ = #log_msg{src = Src, level = Level, msg = Msg}, State) ->
-  io:format("~w - [~c] - ~s~n", [Src, prefix(Level), Msg]),
+  {LogLevel, Stream} = State,
+  case Level of 
+    N when N =< LogLevel -> 
+      io:fwrite(Stream, "~w - [~c] - ~s~n", [Src, prefix(Level), Msg]);
+    _ -> ok
+  end,
   {ok, State}.
 
 handle_call(_Request, State) -> {ok, State}. 

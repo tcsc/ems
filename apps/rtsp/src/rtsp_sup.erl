@@ -1,6 +1,5 @@
 -module(rtsp_sup).
 -behaviour(supervisor).
--include("logging.hrl").
 
 %% Public API
 -export([start_link/0]).
@@ -20,11 +19,11 @@
 start_link() -> 
   case supervisor:start_link({local, rtsp_sup}, ?MODULE, []) of
     {ok, Pid} -> 
-      ?LOG_DEBUG("rtsp:start_link/0 - RTSP supervisor started on ~w", [Pid]),
+      log:debug("rtsp:start_link/0 - RTSP supervisor started on ~w", [Pid]),
       {ok, Pid};
       
     {error, Err} -> 
-      ?LOG_ERROR("rtsp:start_link/0 - RTSP supervisor failed to start ~w", [Err]),
+      log:err("rtsp:start_link/0 - RTSP supervisor failed to start ~w", [Err]),
       {error, Err}
   end.
 

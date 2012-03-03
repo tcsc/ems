@@ -1,6 +1,5 @@
 -module(rtsp).
 -include("rtsp.hrl").
--include("logging.hrl").
 
 %% ============================================================================
 %% Exports
@@ -55,7 +54,7 @@
 %% Application callbacks
 %% ============================================================================
 start() ->
-  ?LOG_INFO("rtsp:start/1 - Starting RTSP Server application", []),
+  log:info("rtsp:start/1 - Starting RTSP Server application", []),
   application:start(listener),
   application:start(rtsp).
 
@@ -272,7 +271,7 @@ format_message(Message,Headers,Body) when is_record(Message,rtsp_response) ->
   % convert the list of strings into a single string
   ResponseText = lists:flatten([ResponseLine | HeaderText]),
   
-  ?LOG_DEBUG("~n~s", [ResponseText]),
+  log:debug("~n~s", [ResponseText]),
   
   % encode the response as UTF-8
   Result = utf:string_to_utf8(lists:append(ResponseText, "\r\n")),

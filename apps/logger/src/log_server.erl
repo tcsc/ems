@@ -34,7 +34,7 @@ start_link() ->
 -spec set_level(log:log_level()) -> any().
 set_level(LogLevel) when is_atom(LogLevel) ->
   case lists:member(LogLevel, [trace, debug, info, warn, err, fatal]) of
-    true -> gen_server:call(log_server, {set_log_level, level_to_int(LogLevel)});
+    true -> gen_server:call(log_server, {set_log_level, log:level_to_int(LogLevel)});
     false -> throw("bad log level")
   end.
 
@@ -44,7 +44,7 @@ set_level(LogLevel) when is_atom(LogLevel) ->
 -spec get_level() -> log:log_level().
 get_level() ->
   case gen_server:call(log_server, get_log_level) of
-    {ok, LogLevel} -> int_to_level(LogLevel)
+    {ok, LogLevel} -> log:int_to_level(LogLevel)
   end.
 
 %% ----------------------------------------------------------------------------
@@ -53,8 +53,6 @@ get_level() ->
 -spec add_sink(module(), term()) -> any().
 add_sink(SinkModule, Args) ->
   gen_server:call(log_server, {add_sink, SinkModule, Args}).
-
-%% ----------------------------------------------------------------------------
 
 %% ----------------------------------------------------------------------------
 %%
@@ -114,12 +112,15 @@ handle_cast({log_rq, Src, MsgLevel, Fmt, Args}, State) ->
   LogLevel = State#log_state.level,
   case State#log_state.level of
     LogLevel when LogLevel >= MsgLevel ->
-        Msg = case Args of 
-                 [] -> Fmt;
-                 _ -> io_lib:format(Fmt, Args)
-              end,
         EventMgr = State#log_state.event_mgr,
-        gen_event:notify(EventMgr, #log_msg{src = Src, level = MsgLevel, msg = Msg});
+
+        {Text,Level} = case format_message(Fmt, Args) of
+                         {ok, M} -> {M, MsgLevel};
+                         {error, M} -> {M, ?LOG_LEVEL_ERROR}
+                       end,
+                        
+        Msg = #log_msg{src = Src, level = Level, msg = Text},
+        gen_event:notify(EventMgr, Msg);
     _ -> ok
   end,
   {noreply, State}.
@@ -146,16 +147,20 @@ terminate(_Reason, _State) -> ok.
 -spec code_change(any(), log_state(), any()) -> {error, term()}.
 code_change(_,_,_) -> {error, "Hot swap not supported"}.
 
-level_to_int(trace) -> ?LOG_LEVEL_TRACE;
-level_to_int(debug) -> ?LOG_LEVEL_DEBUG;
-level_to_int(info)  -> ?LOG_LEVEL_INFO;
-level_to_int(warn)  -> ?LOG_LEVEL_WARN;
-level_to_int(err)   -> ?LOG_LEVEL_ERROR;
-level_to_int(fatal) -> ?LOG_LEVEL_FATAL.
 
-int_to_level(?LOG_LEVEL_TRACE) -> trace;
-int_to_level(?LOG_LEVEL_DEBUG) -> debug;
-int_to_level(?LOG_LEVEL_INFO)  -> info;
-int_to_level(?LOG_LEVEL_WARN)  -> warn;
-int_to_level(?LOG_LEVEL_ERROR) -> err;
-int_to_level(?LOG_LEVEL_FATAL) -> fatal.
+%% ----------------------------------------------------------------------------
+%% @doc Safely formats a message. If formatting the message fails then the 
+%%      resulting error will be caught and turned into an approprate failure 
+%%      log message describing said failure.
+%% ----------------------------------------------------------------------------
+format_message(Fmt, Args) ->
+  try
+    Msg = case args of 
+            [] -> Fmt;
+            _ -> io_lib:format(Fmt, Args)
+          end,
+    {ok, Msg}
+  catch
+    error:_ -> {error, "Failure when trying to format log message"}
+  end.
+

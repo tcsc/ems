@@ -1,7 +1,6 @@
 -module(rtsp_server).
 -author("Trent Clarke <trent.clarke@gmail.com>").
 -behaviour(gen_server).
--include("logging.hrl").
 -include("rtsp.hrl").
 -define(RTSP_SVR, rtsp_server).
 
@@ -49,7 +48,7 @@
 %% ----------------------------------------------------------------------------
 -spec start_link() -> {ok, svr()} | {error, any()}.
 start_link() ->
-  ?LOG_DEBUG("rtsp_server:start_link/1", []),
+  log:debug("rtsp_server:start_link/1", []),
 
   State = #state{ server_string = "EMS RTSP Service/0.1",
                   listeners     = [],
@@ -71,7 +70,7 @@ start_link() ->
 -spec add_listener(inet:ip_address(), integer(), rtsp:request_callback()) -> 
         {ok, listener:listener() } | {error, any()}.
 add_listener(Address, Port, Callback) ->
-  ?LOG_DEBUG("rtsp_server:add_listener/3 - ~w:~w", [Address, Port]),
+  log:debug("rtsp_server:add_listener/3 - ~w:~w", [Address, Port]),
   gen_server:call(rtsp_server, {bind, Address, Port, Callback}).
 
 %% ============================================================================
@@ -88,10 +87,10 @@ add_listener(Address, Port, Callback) ->
                      inet:ip_address(), 
                      rtsp:request_callback()) -> ok.
 new_connection(Socket, _Addr, RequestCallback) ->
-  ?LOG_DEBUG("rtsp_server:new_connection/3 - spawning process to handle connection", []),
+  log:debug("rtsp_server:new_connection/3 - spawning process to handle connection", []),
   {ok, Conn} = gen_server:call(rtsp_server, {spawn_connection, RequestCallback}),
   
-  ?LOG_DEBUG("rtsp_server:new_connection/3 - forwarding socket to connection", []),
+  log:debug("rtsp_server:new_connection/3 - forwarding socket to connection", []),
   % NB: must be called from the process that currently owns the socket (i.e. the 
   % listener process in this case), otherwise re-assigning ownership of the 
   % socket will fail.
@@ -108,7 +107,7 @@ new_connection(Socket, _Addr, RequestCallback) ->
 %% @end
 %% ----------------------------------------------------------------------------
 init(State) ->
-  ?LOG_DEBUG("rtsp_server:init/1",[]),
+  log:debug("rtsp_server:init/1",[]),
   process_flag(trap_exit, true),
   {ok, State}.
   
@@ -119,7 +118,7 @@ init(State) ->
 %% ----------------------------------------------------------------------------
 -spec handle_call(any(), pid(), state()) -> {reply, any(), state()}.
 handle_call({spawn_connection, Callback}, _From, State) ->
-  ?LOG_DEBUG("rtsp_server:new_connection/1 - spawning connection handler", []),
+  log:debug("rtsp_server:new_connection/1 - spawning connection handler", []),
   ServerString = State#state.server_string,
   case rtsp_connection:new(self(), ServerString, Callback) of 
     {ok, Pid} -> Cs = [ Pid | State#state.connections ],
@@ -129,10 +128,13 @@ handle_call({spawn_connection, Callback}, _From, State) ->
   end;
 
 handle_call({bind, Address, Port, Callback}, _From, State) ->
-  ?LOG_DEBUG("rtsp_server:handle_call/3 - attempting to bind to ~w:~w", [Address, Port]),
-  AcceptCallback = fun(Socket, RemoteAddr) ->
-    new_connection(Socket, RemoteAddr, Callback) 
-  end,
+  log:debug("rtsp_server:handle_call/3 - attempting to bind to ~w:~w", [Address, Port]),
+
+  AcceptCallback = 
+    fun(Socket, {RemoteAddr,_Port}) ->
+      new_connection(Socket, RemoteAddr, Callback) 
+    end,
+
   case listener:add(Address, Port, AcceptCallback) of
     {ok, L} -> Listener = #listener{ address  = Address,
                                      port     = Port,
@@ -141,12 +143,12 @@ handle_call({bind, Address, Port, Callback}, _From, State) ->
                StateP = State#state{listeners = Ls},
                {reply, {ok, L}, StateP};
         
-    Err -> ?LOG_ERROR("rtsp_server:handle_call/3 - bind failed with ~w", [Err]),
+    Err -> log:error("rtsp_server:handle_call/3 - bind failed with ~w", [Err]),
            {reply, {error, Err}, State}
   end;
   
 handle_call(_Request, _From, State) ->
-  ?LOG_DEBUG("rtsp_server:handle_call/3 ~w",[_Request]),
+  log:debug("rtsp_server:handle_call/3 ~w",[_Request]),
   {noreply, State}.
 
 %% ----------------------------------------------------------------------------
@@ -155,7 +157,7 @@ handle_call(_Request, _From, State) ->
 %% @end
 %% ----------------------------------------------------------------------------
 handle_cast(_Request, State) ->
-  ?LOG_DEBUG("rtsp_server:handle_cast/2 ~w",[_Request]),
+  log:debug("rtsp_server:handle_cast/2 ~w",[_Request]),
   {noreply, State}.
 
 %% ----------------------------------------------------------------------------
@@ -168,13 +170,13 @@ handle_info({'EXIT', Pid, _Reason}, State) ->
   {noreply, StateP};
 
 handle_info(_Info, State) ->
-  ?LOG_DEBUG("rtsp_server:handle_info/2 - ~w",[_Info]),
+  log:debug("rtsp_server:handle_info/2 - ~w",[_Info]),
   {noreply, State}.
 
 terminate(Reason, _State) ->
-  ?LOG_DEBUG("rtsp_server:terminate/2 - ~w",[Reason]),
+  log:debug("rtsp_server:terminate/2 - ~w",[Reason]),
   ok.
 
 code_change(_OldVersion, State, _Extra) ->
-  ?LOG_DEBUG("rtsp_server:code_change/3",[]),
+  log:debug("rtsp_server:code_change/3",[]),
   {ok, State}.
