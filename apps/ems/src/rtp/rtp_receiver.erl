@@ -2,7 +2,6 @@
 -export ([start_link/3, receiver_entrypoint/4, enable/1]).
 
 %%-include_lib("kernel/include/inet.hrl").
--include ("logging.hrl").
 -include ("rtp.hrl").
 
 -record(stats, {rx_packets          = 0 :: non_neg_integer(),
@@ -36,18 +35,18 @@
 %% @end
 %% ---------------------------------------------------------------------------- 
 start_link(ClockRate, TransportSpec, ClientAddress) ->
-  ?LOG_DEBUG("rtp_receiver:start_link/2 - starting RTP receiver", []),
+  log:debug("rtp_receiver:start_link/2 - starting RTP receiver", []),
   
   case transport_type(TransportSpec) of
     unicast ->
-      ?LOG_DEBUG("rtp_receiver:start_link/2 - starting receiver process", []),
+      log:debug("rtp_receiver:start_link/2 - starting receiver process", []),
       {ok, {Pid, ServerTransport}} = proc_lib:start_link(?MODULE, 
         receiver_entrypoint, 
         [ClockRate, TransportSpec, ClientAddress, self()]),
       {Pid, ServerTransport};
       
     _ ->
-      ?LOG_DEBUG("rtp_receiver:start_link/2 - Unsupported transport", []),
+      log:debug("rtp_receiver:start_link/2 - Unsupported transport", []),
       throw({rtp_receiver, unsupported_transport})
   end.
 
@@ -55,7 +54,7 @@ start_link(ClockRate, TransportSpec, ClientAddress) ->
 %% @spec receiver_entrypoint(TransportSpec, OwnerPid) -> ok.
 %% ----------------------------------------------------------------------------  
 receiver_entrypoint(ClockRate, TransportSpec, RemoteAddress, OwnerPid) ->
-  ?LOG_DEBUG("rtp_receiver:receiver_entrypoint/3 - creating RTP sockets", []),
+  log:debug("rtp_receiver:receiver_entrypoint/3 - creating RTP sockets", []),
   
   ClientAddress = case lists:keyfind(source, 1, TransportSpec) of
     {source, Source} -> Source;
@@ -74,7 +73,7 @@ receiver_entrypoint(ClockRate, TransportSpec, RemoteAddress, OwnerPid) ->
   {ok, {Host, RtpPort}} = inet:sockname(RtpSocket),
   {ok, RtcpPort} = inet:port(RtcpSocket),
   
-  ?LOG_DEBUG("rtp_receiver:receiver_entrypoint/3 - Server Ports are ~w:~w-~w", 
+  log:debug("rtp_receiver:receiver_entrypoint/3 - Server Ports are ~w:~w-~w", 
     [Host, RtpPort, RtcpPort]),
     
   ServerTransportSpec = [
@@ -91,7 +90,7 @@ receiver_entrypoint(ClockRate, TransportSpec, RemoteAddress, OwnerPid) ->
 
   proc_lib:init_ack({ok, {self(), ServerTransportSpec}}),
 
-  ?LOG_DEBUG("rtp_receiver:receiver_entrypoint/1 - Starting RTP receiver loop", []),  
+  log:debug("rtp_receiver:receiver_entrypoint/1 - Starting RTP receiver loop", []),  
   receiver_loop(
     #state{owner_pid=OwnerPid, 
            sync_src=SyncSource,
@@ -139,12 +138,12 @@ receiver_loop(State, RtpSocket, RtcpSocket) ->
         cleanup(State);
       
       Message ->      
-        ?LOG_DEBUG("rtp_receiver:receiver_loop/3 - something happened (~w)", [Message]),
+        log:debug("rtp_receiver:receiver_loop/3 - something happened (~w)", [Message]),
         receiver_loop(State, RtpSocket, RtcpSocket)
     end
   catch
     Error ->
-      ?LOG_ERROR("rtp_receiver:receiver_loop/3 - error ~p", [Error]),
+      log:err("rtp_receiver:receiver_loop/3 - error ~p", [Error]),
       cleanup(State)
   end.
 
@@ -154,7 +153,7 @@ enable(Receiver) -> Receiver ! enable.
 %% @spec handle_enable(State) -> NewState
 %% ----------------------------------------------------------------------------   
 handle_enable(State) ->
-  ?LOG_DEBUG("rtp_receiver:handle_enable/1 - starting RR timer", []),
+  log:debug("rtp_receiver:handle_enable/1 - starting RR timer", []),
   {ok, Timer} = timer:send_interval(1000, self(), send_rtcp_rr),
   State#state{rtcp_timer = Timer, enabled = true}.
 
@@ -165,7 +164,7 @@ handle_enable(State) ->
   NewState :: state(). 
 
 send_rtcp_rr(State = #state{stats = Stats}, RtcpSocket) ->
-  ?LOG_DEBUG("rtp_receiver:send_rtcp_rr/2", []),
+  log:debug("rtp_receiver:send_rtcp_rr/2", []),
   
   case State#state.last_sr_arrival of
     LastSrArrival when is_integer(LastSrArrival) -> 

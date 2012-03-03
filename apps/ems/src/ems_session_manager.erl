@@ -1,6 +1,5 @@
 -module(ems_session_manager).
 -behaviour(gen_server).
--include("logging.hrl").
 
 %% ============================================================================
 %% Definitions
@@ -36,7 +35,7 @@
 %% @end
 %% ----------------------------------------------------------------------------
 start_link() -> 
-  ?LOG_DEBUG("ems_session_manager:start_link/0",[]),
+  log:debug("ems_session_manager:start_link/0",[]),
   gen_server:start_link({local,ems_session_manager}, ?MODULE, {}, []).
 
 %% ----------------------------------------------------------------------------
@@ -48,7 +47,7 @@ start_link() ->
 receive_rtsp_request(Sequence, Request, Headers, Body) ->
   {Method, Uri, _, _, _} = rtsp:get_request_info(Request, Headers),
   {_,_,_,Path} = url:parse(Uri),
-  ?LOG_DEBUG("ems_session_manager:receive_rtsp_request/4 - receving ~w ~s", 
+  log:debug("ems_session_manager:receive_rtsp_request/4 - receving ~w ~s", 
     [Method, Uri]),
   gen_server:cast(ems_session_manager,
     {rtsp_request, self(),  {Method, Path, Sequence, Request, Headers, Body}}).
@@ -62,16 +61,16 @@ receive_rtsp_request(Sequence, Request, Headers, Body) ->
 %% @end
 %% ----------------------------------------------------------------------------
 init(_Args) ->
-  ?LOG_DEBUG("ems_session_manager:init/1",[]),
+  log:debug("ems_session_manager:init/1",[]),
   process_flag(trap_exit, true),
     
   % seed the random number generator for this process
-  ?LOG_DEBUG("ems_session_manager:init/1 - Seeding RNG",[]),
+  log:debug("ems_session_manager:init/1 - Seeding RNG",[]),
   {A1,A2,A3} = now(),
   random:seed(A1,A2,A3),
   
   % create the ETS table for mapping sessions to processes
-  ?LOG_DEBUG("ems_session_manager:init/1 - Creating ETS tables",[]),
+  log:debug("ems_session_manager:init/1 - Creating ETS tables",[]),
   ets:new(ems_session_list, [set,protected,named_table,{keypos,2}]),
   {ok, []}.
   
@@ -96,19 +95,19 @@ handle_cast({rtsp_request, SenderPid, RequestArgs}, State ) ->
 
 % The default implementation. Does nothing.
 handle_cast(_Request, State) ->
-  ?LOG_DEBUG("ems_session_manager:handle_cast/2 - ~w", [_Request]),
+  log:debug("ems_session_manager:handle_cast/2 - ~w", [_Request]),
   {noreply, State}.
   
 %% ----------------------------------------------------------------------------
 %% @doc Handles a message not sent by the call or cast methods
 %% @end
 %% ----------------------------------------------------------------------------
-handle_info({'EXIT', ChildPid, Reason}, State) ->
-  ?LOG_DEBUG("ems_session_manager:handle_info/2 - Pid ~p has quit", [ChildPid]),
+handle_info({'EXIT', ChildPid,_Reason}, State) ->
+  log:debug("ems_session_manager:handle_info/2 - Pid ~p has quit", [ChildPid]),
   
   case ets:match(ems_session_list, {'_', '$1', ChildPid}) of
     [[SessionId]] -> 
-      ?LOG_DEBUG("ems_session_manager:handle_info/2 - Pid ~p was session ~p", 
+      log:debug("ems_session_manager:handle_info/2 - Pid ~p was session ~p", 
         [ChildPid, SessionId]),
       ets:delete(ems_session_list, SessionId);
       
@@ -118,7 +117,7 @@ handle_info({'EXIT', ChildPid, Reason}, State) ->
   {noreply, State};
   
 handle_info(_Info, State) ->
-  ?LOG_DEBUG("ems_session_manager:handle_info/2 - ~w", [_Info]),
+  log:debug("ems_session_manager:handle_info/2 - ~w", [_Info]),
   {noreply, State}.
 
 %% ----------------------------------------------------------------------------
@@ -126,7 +125,7 @@ handle_info(_Info, State) ->
 %% @end
 %% ----------------------------------------------------------------------------
 terminate(Reason, _State) ->
-  ?LOG_DEBUG("ems_session_manager:terminate/2 ~w", [Reason]),
+  log:debug("ems_session_manager:terminate/2 ~w", [Reason]),
   ok.
   
 %% ----------------------------------------------------------------------------
@@ -134,7 +133,7 @@ terminate(Reason, _State) ->
 %% @end
 %% ----------------------------------------------------------------------------
 code_change(_OldVersion, State, _Extra) ->
-  ?LOG_DEBUG("ems_session_manager:upgrade/3 - Upgrading from ~w", [_OldVersion]),
+  log:debug("ems_session_manager:upgrade/3 - Upgrading from ~w", [_OldVersion]),
   {ok, State}.
   
 %% ============================================================================
@@ -190,14 +189,14 @@ handle_request(_Method, Path, Sequence, Request, Headers, Body, ConnectionPid, S
 create_session(Path, Owner) ->
   case lookup_session_process(Path) of
     {_, _} ->
-      ?LOG_DEBUG("ems_session_manager: session ~s already exists on this url", [Path]),
+      log:debug("ems_session_manager: session ~s already exists on this url", [Path]),
       {error, already_exists};
       
     false -> 
       Id = random:uniform(99999999),
       {ok, Pid} = ems_session:start_link(Id, Path, Owner),
 
-      ?LOG_DEBUG("ems_session_manager: New session for ~p: id ~p on process ~p",
+      log:debug("ems_session_manager: New session for ~p: id ~p on process ~p",
         [Path, Id, Pid]),
       ets:insert(ems_session_list, #session_info{path = Path, id = Id, pid = Pid} ),
       

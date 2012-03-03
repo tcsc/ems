@@ -1,6 +1,5 @@
 -module(ems_supervisor).
 -behaviour(supervisor).
--include("logging.hrl").
 
 %% ============================================================================
 %% External Exports
@@ -27,14 +26,14 @@
 %% @end
 %% ----------------------------------------------------------------------------
 start_link(Config) ->
-	?LOG_INFO("ems_supervisor:start_link/1 - Starting EMS Supervisor", []),
+	log:info("ems_supervisor:start_link/1 - Starting EMS Supervisor", []),
 	case supervisor:start_link({local, ?SERVER}, ?MODULE, Config) of
 		{ok, Pid} ->
-			?LOG_DEBUG("ems_supervisor:start_link/1 - Supervisor started on ~w", [Pid]),
+			log:debug("ems_supervisor:start_link/1 - Supervisor started on ~w", [Pid]),
 			{ok, Pid};
 			
 		{error, Reason} ->
-		  ?LOG_DEBUG("ems_supervisor:start_link/1 - Supervisor failed to start: ~p", [Reason]),
+		  log:debug("ems_supervisor:start_link/1 - Supervisor failed to start: ~p", [Reason]),
 		  {error, Reason}
 	end.
 
@@ -46,7 +45,7 @@ start_link(Config) ->
 %% @spec init([]) -> {ok, {SupervisorFlags, ChildSpec}}
 %% ----------------------------------------------------------------------------
 init(ConfigHandle) ->
-	?LOG_INFO("ems_supervisor:init/1 - building child spec list", []),
+	log:info("ems_supervisor:init/1 - building child spec list", []),
 	
 	RestartStrategy        = one_for_one,
 	MaxRestarts            = 1000,

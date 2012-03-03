@@ -1,7 +1,6 @@
 -module(rtsp_digest_server).
 -author("Trent Clarke <trent.clarke@gmail.com>").
 -behaviour(gen_server).
--include("logging.hrl").
 -include("digest.hrl").
 
 -export([start_link/0, get_context/1]).
@@ -47,7 +46,7 @@ get_context(Conn) ->
 %% ============================================================================
 
 init(_) ->
-  ?LOG_DEBUG("rtsp_digest_server:init/1: Starting", []),
+  log:debug("rtsp_digest_server:init/1: Starting", []),
   TimerInterval = 30000,
   TRef = queue_timer(TimerInterval),
   State = #state{db = dict:new(), 

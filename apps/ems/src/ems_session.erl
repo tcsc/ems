@@ -1,6 +1,5 @@
 -module(ems_session).
 -behavior(gen_server).
--include("logging.hrl").
 -include ("sdp.hrl").
 -include("rtsp.hrl").
 
@@ -38,7 +37,7 @@
 
 -spec start(Path :: string(), Description :: sdp:session_description()) -> {'ok', session()}.
 start(Path, Description) -> 
-  ?LOG_DEBUG("session:new/2 - Creating session for ~s", [Path]),
+  log:debug("session:new/2 - Creating session for ~s", [Path]),
   State = #state{path = Path, description = Description},
   {ok, gen_server:start(?MODULE, State, [])}.
 
@@ -48,7 +47,7 @@ start(Path, Description) ->
 %% ----------------------------------------------------------------------------
 -spec start_link(Id::integer(), Path::string()) -> pid().
 start_link(Id, Path) ->
-  ?LOG_DEBUG("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
+  log:debug("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
   State = #state{id = Id, path = Path},
   {ok, gen_server:start_link(?MODULE, State, [])}.
 
@@ -152,7 +151,7 @@ destroy_channels(State) ->
 % it ready to receive RTP data from the broadcaster
 setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State) ->
   
-  ?LOG_DEBUG("ems_session:setup_stream/5", []),
+  log:debug("ems_session:setup_stream/5", []),
   
   case dict:find(StreamName, State#state.channels) of
     {ok, ChannelPid} -> 
@@ -163,7 +162,7 @@ setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State) ->
                   
       case Direction of 
         inbound ->
-          ?LOG_DEBUG("ems_session:setup_stream/5 - setting up inbound stream", []),
+          log:debug("ems_session:setup_stream/5 - setting up inbound stream", []),
           {Client, NewState} = get_or_create_client(Headers, State#state.id, State),
           
           {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport, ClientAddress),

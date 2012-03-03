@@ -3,7 +3,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("rtsp.hrl").
 -include("digest.hrl").
--include("logging.hrl").
 
 -export([parse/1, get_user_name/1, validate/4, get_headers/3, authenticate_digest/4]).
 

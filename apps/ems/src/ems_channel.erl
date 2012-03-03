@@ -1,5 +1,4 @@
 -module (ems_channel).
--include ("logging.hrl").
 -include ("sdp.hrl").
 -record (state, {pid, stream, rtpmap, receiver}).
 -behaviour (gen_server).
@@ -24,12 +23,12 @@
 %% @end
 %% ============================================================================
 start_link(Stream, RtpMap) ->
-	?LOG_DEBUG("ems_channel:start_link/2", []),
+	log:debug("ems_channel:start_link/2", []),
 	State = #state{stream = Stream, rtpmap=RtpMap},
 	case gen_server:start_link(?MODULE, State, []) of
 		{ok, Pid} -> {ok, Pid};
 		Error -> 
-			?LOG_ERROR("ems_channel:start_link/2 failed to start: ~w", [Error]),
+			log:err("ems_channel:start_link/2 failed to start: ~w", [Error]),
 			Error
 	end.
 
@@ -40,7 +39,7 @@ start_link(Stream, RtpMap) ->
 %% ============================================================================
 configure_input(Pid, Transport, ClientAddress) ->
   try 
-    ?LOG_DEBUG("ems_channel:configure_input/3", []),
+    log:debug("ems_channel:configure_input/3", []),
     gen_server:call(Pid, {configure, Transport, ClientAddress})
   catch
     exit:{timeout,_} -> {error, timeout};
@@ -51,7 +50,7 @@ configure_input(Pid, Transport, ClientAddress) ->
 %%
 %% ----------------------------------------------------------------------------  
 stop(Pid) ->
-  ?LOG_DEBUG("ems_channel:stop/1", []),
+  log:debug("ems_channel:stop/1", []),
   gen_server:cast(Pid, {stop_chanel, self()}).
   
 %% ============================================================================
@@ -62,7 +61,7 @@ stop(Pid) ->
 %%
 %% ----------------------------------------------------------------------------
 init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
-  ?LOG_DEBUG("ems_channel:init/1 - starting channel for ~s", 
+  log:debug("ems_channel:init/1 - starting channel for ~s", 
     [Stream#media_stream.control_uri]),
   process_flag(trap_exit, true),
   {ok, Args}.
@@ -74,19 +73,19 @@ init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
 %% @end
 %% ----------------------------------------------------------------------------
 handle_call({configure, TransportSpec, ClientAddress}, _From, State) ->
-  ?LOG_DEBUG("ems_channel:handle_call/3 - handling stream configure", []),
+  log:debug("ems_channel:handle_call/3 - handling stream configure", []),
 
   {_,RtpInfo} = State#state.rtpmap,
   
   {RtpReceiverPid, ServerTransportSpec} = 
     rtp_receiver:start_link(RtpInfo#rtp_map.clock_rate, TransportSpec, ClientAddress),
                           
-  ?LOG_DEBUG("ems_channel:handle_call/3 - Server Transport Spec: ~w", [ServerTransportSpec]),  
+  log:debug("ems_channel:handle_call/3 - Server Transport Spec: ~w", [ServerTransportSpec]),  
   NewState = State#state{receiver = RtpReceiverPid},
   {reply, {ok, ServerTransportSpec}, NewState};
   
 handle_call(_Request, _From, State) ->
-	?LOG_DEBUG("ems_channel:handle_call/3",[]),
+	log:debug("ems_channel:handle_call/3",[]),
 	{noreply, State}.
 
 %% ----------------------------------------------------------------------------
@@ -99,31 +98,31 @@ handle_call({stop_channel, _From}, State) ->
   {stop, graceful_exit, State}.
 
 handle_cast(_Request, State) ->
-	?LOG_DEBUG("ems_channel:handle_cast/2 ~w",[_Request]),
+	log:debug("ems_channel:handle_cast/2 ~w",[_Request]),
 	{noreply, State}.
 
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------	
 handle_info(enable, State) ->
-	?LOG_DEBUG("ems_channel:handle_info/2 - starting rtp receiver",[]),
+	log:debug("ems_channel:handle_info/2 - starting rtp receiver",[]),
 	rtp_receiver:enable(State#state.receiver),
 	{noreply, State};
 
 handle_info(_Info, State) ->
-	?LOG_DEBUG("ems_channel:handle_info/2 - ~p",[_Info]),
+	log:debug("ems_channel:handle_info/2 - ~p",[_Info]),
 	{noreply, State}.
 
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------	
 terminate(Reason, _State) ->
-	?LOG_DEBUG("ems_channel:terminate/2 - ~w",[Reason]),
+	log:debug("ems_channel:terminate/2 - ~w",[Reason]),
 	ok.
 	
 %% ----------------------------------------------------------------------------
 %% 
 %% ----------------------------------------------------------------------------	
 code_change(_OldVersion, State, _Extra) ->
-	?LOG_DEBUG("ems_channel:code_change/3",[]),
+	log:debug("ems_channel:code_change/3",[]),
 	{ok, State}.

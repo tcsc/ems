@@ -1,6 +1,5 @@
 -module(rtp).
 -include ("rtp.hrl").
--include ("logging.hrl").
 -export ([parse/1, create_socket_pair/1]).
 
 %% ----------------------------------------------------------------------------

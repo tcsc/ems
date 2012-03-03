@@ -1,6 +1,5 @@
 -module(ems_server).
 -behaviour(gen_server).
--include("logging.hrl").
 
 %% ============================================================================
 %% gen_server callbacks
@@ -33,14 +32,14 @@
 %% @end
 %% ----------------------------------------------------------------------------
 start_link(ConfigHandle) ->
-  ?LOG_INFO("ems_server:start_link/1", []),
+  log:info("ems_server:start_link/1", []),
   
   State = #server_state{name=ems_server},
   Config = ems_config:get_config(ConfigHandle),
   
   case gen_server:start_link({local,ems_server}, ?MODULE, State, []) of
     {ok,Pid} -> 
-      ?LOG_DEBUG("ems_server:start_link/0 - server started on ~w", [Pid]),
+      log:debug("ems_server:start_link/0 - server started on ~w", [Pid]),
       RtspConfig = case lists:keyfind(rtsp, 1, Config) of
                      {rtsp, Rtsp} -> Rtsp;
                      false -> []
@@ -49,7 +48,7 @@ start_link(ConfigHandle) ->
       {ok,Pid};
 
     Error ->
-      ?LOG_DEBUG("ems_server:start_link/0 - server failed to start ~w", [Error]),
+      log:debug("ems_server:start_link/0 - server failed to start ~w", [Error]),
       Error
   end.    
 
@@ -75,7 +74,7 @@ create_session(Config, Path, UserInfo, Desc, _Options) ->
       Rights =  ems_config:get_user_rights(Config, UserInfo, MountPoint),
       case lists:member(broadcast, Rights) of
         true -> 
-          ?LOG_DEBUG("ems_server:create_session/5 - user has broadcast rights for \"~s\"", [Path]),
+          log:debug("ems_server:create_session/5 - user has broadcast rights for \"~s\"", [Path]),
           {ok, Session} = ems_session:new(Path, Desc),
           Channels = ems_session:collect_channels(Path, Session); %,
 %          case register_session(Path, Session, Channels) of
@@ -87,7 +86,7 @@ create_session(Config, Path, UserInfo, Desc, _Options) ->
       end;
       
     _ -> 
-      ?LOG_DEBUG("ems_server:create_session/5 - no such mount point", []),
+      log:debug("ems_server:create_session/5 - no such mount point", []),
       not_found
   end.
   
@@ -120,7 +119,7 @@ create_session(Config, Path, UserInfo, Desc, _Options) ->
 %% @end
 %% ----------------------------------------------------------------------------
 init(State) ->
-  ?LOG_INFO("ems_server:init/1", []),
+  log:info("ems_server:init/1", []),
   {ok, State}.
 
 %% ----------------------------------------------------------------------------
@@ -130,7 +129,7 @@ init(State) ->
 %% @end
 %% ----------------------------------------------------------------------------
 handle_call(_Request, _From, State) ->
-  ?LOG_DEBUG("ems_server:handle_call/3",[]),
+  log:debug("ems_server:handle_call/3",[]),
   {noreply, State}.
   
 %% ----------------------------------------------------------------------------
@@ -140,22 +139,22 @@ handle_call(_Request, _From, State) ->
 %% @end
 %% ----------------------------------------------------------------------------
 handle_cast(_Request, State) ->
-  ?LOG_DEBUG("ems_server:handle_cast/2 ~w",[_Request]),
+  log:debug("ems_server:handle_cast/2 ~w",[_Request]),
   {noreply, State}.
 
 %% ----------------------------------------------------------------------------
 %% 
 %% ---------------------------------------------------------------------------- 
 handle_info(_Info, State) ->
-  ?LOG_DEBUG("ems_server:handle_info/2",[]),
+  log:debug("ems_server:handle_info/2",[]),
   {noreply, State}.
   
 terminate(Reason, _State) ->
-  ?LOG_DEBUG("ems_server:terminate/2 - ~w",[Reason]),
+  log:debug("ems_server:terminate/2 - ~w",[Reason]),
   ok.
   
 code_change(_OldVersion, State, _Extra) ->
-  ?LOG_DEBUG("ems_server:code_change/3",[]),
+  log:debug("ems_server:code_change/3",[]),
   {ok, State}.
   
 
