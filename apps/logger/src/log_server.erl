@@ -4,11 +4,20 @@
 -include("logger.hrl").
 
 %% Public API ----------------------------------------------------------------
--export([start_link/0, set_level/1, get_level/0, log_message/3, add_sink/2]).
+-export([start_link/0,
+         add_sink/2,
+         set_level/1, 
+         get_level/0, 
+         log_message/3, 
+         stop/0]).
 
 %% gen_server callbacks ------------------------------------------------------
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, 
-         terminate/2, code_change/3]).
+-export([init/1, 
+         handle_call/3,
+         handle_cast/2, 
+         handle_info/2, 
+         terminate/2,
+         code_change/3]).
 
 -record( log_state, {level :: integer(), event_mgr :: pid()}).
 -type log_state() :: #log_state{}.
@@ -27,6 +36,10 @@
 -spec start_link() -> {ok, pid()} | {error, any()}.
 start_link() ->
   gen_server:start_link({local, log_server}, ?MODULE, [], []).
+
+-spec stop() -> any().
+stop() ->
+  gen_server:call(log_server, quit).
   
 %% ----------------------------------------------------------------------------
 %%
@@ -34,8 +47,12 @@ start_link() ->
 -spec set_level(log:log_level()) -> any().
 set_level(LogLevel) when is_atom(LogLevel) ->
   case lists:member(LogLevel, [trace, debug, info, warn, err, fatal]) of
-    true -> gen_server:call(log_server, {set_log_level, log:level_to_int(LogLevel)});
-    false -> throw("bad log level")
+    true ->
+      LevelNo = log:level_to_int(LogLevel),
+      gen_server:call(log_server, {set_log_level, LevelNo});
+
+    false -> 
+      throw("bad log level")
   end.
 
 %% ----------------------------------------------------------------------------
@@ -99,7 +116,10 @@ handle_call(get_log_level, _From, State = #log_state{level = Level}) ->
 handle_call({add_sink, Module, Args}, _From, State) ->
   EventMgr = State#log_state.event_mgr,
   Result = gen_event:add_handler(EventMgr, Module, Args),
-  {reply, Result, State}.
+  {reply, Result, State};
+
+handle_call(quit, _From, State) ->
+  {stop, normal, ok, State}.
 
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen_server in response to a cast message.
@@ -157,7 +177,7 @@ format_message(Fmt, Args) ->
   try
     Msg = case args of 
             [] -> Fmt;
-            _ -> io_lib:format(Fmt, Args)
+            _ -> lists:flatten(io_lib:format(Fmt, Args))
           end,
     {ok, Msg}
   catch
