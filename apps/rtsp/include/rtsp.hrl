@@ -5,23 +5,23 @@
 %% @doc The common parts of an rtsp message
 %% ----------------------------------------------------------------------------
 -record(rtsp_message_header, {
-  sequence, 
-  content_length = 0, 
-  content_type, 
-  headers = dict:new()}).
+          sequence             :: integer(), 
+          content_length = 0   :: integer(), 
+          content_type         :: string(), 
+          headers = dict:new() :: dict()}).
 
 %% ----------------------------------------------------------------------------
 %% @doc The basic structure of an RTSP request
 %% @end
 %% ----------------------------------------------------------------------------
 -record(rtsp_request, {
-  method, 
-  uri, 
-  version = {1,0}}).
+         method          :: string(), 
+         uri             :: string(), 
+         version = {1,0} :: {integer(), integer()}}).
 
 -record(rtsp_response, {
-  status, 
-  version = {1,0}}).
+         status :: integer(), 
+         version = {1,0} :: {integer(), integer()}}).
 
 -record(rtsp_user_info, {
   id :: integer(), 

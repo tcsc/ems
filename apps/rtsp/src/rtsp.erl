@@ -28,20 +28,42 @@
 %% ============================================================================
 %%
 %% ============================================================================
--type message() :: #rtsp_message{}.
--type request() :: #rtsp_request{}.
--type response() :: #rtsp_response{}.
--type header() :: #rtsp_message_header{}.
--type user_info() :: #rtsp_user_info{}.
+
+%% Encapsulates an RTSP message - either an RTSP request or response.
+-type version() :: {Major :: integer(), Minor :: integer()}.
+
+-type message() :: #rtsp_message{message :: request() | response(),
+                                 headers :: header(),
+                                 body :: binary()}.
+
+-type request() :: #rtsp_request{method :: string(), 
+                                 uri :: string(), 
+                                 version :: version()}.
+
+-type response() :: #rtsp_response{status :: integer(),
+                                   version :: version()}.
+
+-type header() :: #rtsp_message_header{sequence :: integer(),
+                                       content_length :: integer(),
+                                       content_type :: string(),
+                                       headers :: dict()}.
+
+-type user_info() :: #rtsp_user_info{id :: integer(),
+                                     username :: string(),
+                                     password :: string()}.
 -type svr() :: pid().
 -type conn() :: pid().
+
+%% A callback type given to the RTSP server. The server will use this callback 
+%% function to forward requests to someone to handle them.
 -type request_callback() :: fun((conn(), message()) -> any()).
 
 -export_type([message/0, conn/0, svr/0, request/0, header/0, request_callback/0, user_info/0]).
--opaque([conn/0, svr/0]).
+-opaque_type([conn/0, svr/0]).
                                  
--type user_info_callback() :: fun((string()) -> false | {ok, user_info()}).
--type authenticated_action() :: fun((user_info()) -> any()).
+-type user_info_callback() :: fun((Username :: string()) -> 
+                                    false | {ok, user_info()}).
+-type authenticated_action() :: fun((UserInfo :: user_info()) -> any()).
 -export_type([user_info_callback/0, authenticated_action/0]).
 
 %% ============================================================================
@@ -344,20 +366,17 @@ format_response_line(Response) when is_record(Response, rtsp_response) ->
 
 %% -----------------------------------------------------------------------------
 %% @doc Parses the common parts of an rtsp message and returns it 
-%% @spec parse_header(Lines) -> Result
 %% @end
 %% -----------------------------------------------------------------------------
+-spec parse_headers([iolist()]) -> dict().
 parse_headers(Lines) ->
   parse_headers(Lines, dict:new()).
 
 %% -----------------------------------------------------------------------------
 %% @doc Constructs a dictionary containing the header values.
-%% @spec parse_header(Lines,Headers) -> Result
-%%       Lines = [iolist()]
-%%       Headers = dictionary()
-%%       Result = dictionary()
 %% @end
 %% -----------------------------------------------------------------------------  
+-spec parse_headers([iolist()], dict()) -> dict().
 parse_headers([Line|Leftover], Headers) -> 
   {NameText,EndOfName} = stringutils:extract_token(Line,0,$:),
   {ValueText,_} = stringutils:extract_token(Line,EndOfName+1,$\n),
@@ -404,9 +423,9 @@ reify_headers(Headers) ->
 %% @doc Formats the headers as a list of strings. Note that ani multivalued 
 %%      headers must have already bee coalesced into a single string by the 
 %%      time they get here.
-%% @spec format_headers(Hedaers) -> [string()]
-%% end
+%% @end
 %% ----------------------------------------------------------------------------
+-spec format_headers(dict()) -> [string()].
 format_headers(Headers = #rtsp_message_header{
     sequence = Sequence, content_length = ContentLength }) ->
   
@@ -444,9 +463,10 @@ find_eom(Data) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc The internal implementation of find_eom/1.
-%% @spec find_eom(Offset,Data) -> {ok,Message,Remainder} | notfound.
 %% @end
 %% ----------------------------------------------------------------------------
+-spec find_eom(integer(),binary()) -> 
+        notfound | {ok, Message :: binary(), Remainder :: binary()}. 
 find_eom(Offset, Data) when Offset < size(Data) ->
   case Data of 
     <<Message:Offset/binary, $\r, $\n, $\r, $\n, Remainder/binary>> ->
@@ -460,13 +480,9 @@ find_eom(_Offset, _Data) ->
 
 %% ----------------------------------------------------------------------------  
 %% @doc Formats a trasport spec as an RTSP transport header
-%% @spec format_transport(TransportSpec) -> Result
-%%         TransportSpec = [TransportOption]
-%%         TransportOption = atom() | {Name, Value}
-%%         Name = Value = string() | atom()
-%%         Result = string()
 %% @end
 %% ----------------------------------------------------------------------------  
+-spec format_transport([term()]) -> string().
 format_transport(TransportSpec) ->
   {protocol, Protocol} = lists:keyfind(protocol, 1, TransportSpec),
   {profile, Profile} = lists:keyfind(profile, 1, TransportSpec),
@@ -513,12 +529,9 @@ format_transport_attributes([],Result) ->
 %% @doc Translates a single element of a transport header, returning either
 %%      the single attribute, or a 2-element tuple describing a name/value
 %%      pair.
-%%
-%% @spec format_single_attribute(Attribute) -> Result 
-%%         Result = string() | {Name, Value}
-%%         Name = Value = string().
-%% @end
 %% ----------------------------------------------------------------------------  
+-spec format_single_attribute(term()) -> 
+        string() | {Name :: string(), Value :: string()}.
 format_single_attribute(Attribute) ->
   case Attribute of
     multicast                  -> "multicast";

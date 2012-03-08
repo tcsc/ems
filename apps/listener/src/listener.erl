@@ -102,8 +102,9 @@ init(_Args) ->
 	{ok, {{one_for_one, 10, 1}, []}}.
 
 %% ----------------------------------------------------------------------------		
-%% @spec init_listener(State) -> {ok,Pid} | {error, Reason}.
+%%
 %% ----------------------------------------------------------------------------	
+-spec init_listener(State :: term()) -> {ok,Pidi :: pid()} | {error, Reason :: term()}.
 init_listener(State) ->
 	log:debug("listener:init_listener/1",[]),
 	case proc_lib:start_link(?MODULE, run_listener, [State]) of

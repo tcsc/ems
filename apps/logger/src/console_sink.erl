@@ -1,3 +1,8 @@
+%% ============================================================================
+%% @doc A log sink that writes the log message out to the console.
+%% @end
+%% ============================================================================
+
 -module(console_sink).
 -author("Trent Clarke <trent.clarke@gmail.com>").
 -behaviour(gen_event).
@@ -11,14 +16,17 @@
          terminate/2, 
          code_change/3]).
 
+-type state() :: {log:level(), atom()}.
+
 %% ============================================================================
 %% Public API
 %% ============================================================================
 
 %% --------------------------------------------------------------------------
-%% @doc Receives a logging message from the log server and writes it out to 
-%%      the console.
+%% @doc Initialises a console sink for use with the logger.
+%% @end
 %% --------------------------------------------------------------------------
+-spec init([term()]) -> {ok, state()}.
 init(Options) -> 
   LogLevel = case lists:keyfind(log_level, 1, Options) of
                 {log_level, L} -> log:level_to_int(L);
@@ -33,6 +41,7 @@ init(Options) ->
 %% --------------------------------------------------------------------------
 %% @doc Receives a logging message from the log server and writes it out to 
 %%      the console.
+%% @end
 %% --------------------------------------------------------------------------
 handle_event(_ = #log_msg{src = Src, level = Level, msg = Msg}, State) ->
   {LogLevel, Stream} = State,

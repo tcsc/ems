@@ -10,7 +10,7 @@
 -type cookie() :: any().
 -type handle() :: {cookie(), module()}. 
 -export_type([handle/0]).
--opaque([handle/0]).
+-opaque_type([handle/0]).
 
 %% ============================================================================
 %% Public API

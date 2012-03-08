@@ -16,7 +16,7 @@
 -type svr() :: pid().
 -type ctx() :: #digest_ctx{}.
 -export_type([svr/0, ctx/0]).
--opaque([svr/0]).
+%-opaque([svr/0]).
 
 -record(state, { db               :: dict(), 
                  poll_interval_ms :: integer(),
@@ -99,7 +99,7 @@ handle_info(cull_expired, State = #state{db = Db,
   
 %% ----------------------------------------------------------------------------
 %% @doc Cleans up after the server is terminated
-%% @priqvate
+%% @private
 %% @end
 %% ----------------------------------------------------------------------------
 -spec terminate(Reason :: any(), State :: state()) -> ok.

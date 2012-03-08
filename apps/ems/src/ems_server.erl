@@ -20,22 +20,25 @@
 %% ============================================================================
 %% Records, macros, etc
 %% ============================================================================
--record(server_state, {name}).
+-record(state, {name :: atom(),
+                config :: ems_config:handle()}).
+-type state() :: #state{}.
 
 %% ============================================================================
 %% Public API
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @doc Starts the network server on a given IP address & port pair.
-%% @spec start_link(IpAddress,Port) -> {ok, Pid} | {error, Reason}
+%% @doc Starts the network server on a given IP address and  port pair.
 %% @end
 %% ----------------------------------------------------------------------------
+-spec start_link(ems_config:handle()) -> 
+        {ok, pid()} | {error, Reason :: term()}.
 start_link(ConfigHandle) ->
   log:info("ems_server:start_link/1", []),
   
-  State = #server_state{name=ems_server},
   Config = ems_config:get_config(ConfigHandle),
+  State = #state{name=ems_server, config = Config},
   
   case gen_server:start_link({local,ems_server}, ?MODULE, State, []) of
     {ok,Pid} -> 
@@ -60,36 +63,41 @@ stop(_State) ->
   gen_server:cast(ems_server, stop).
 
 %% ----------------------------------------------------------------------------
-%% @doc Creates a new session and registers it at the supplied path
+%% @doc Creates a new session and registers it at the supplied path. This 
+%%      function is responsible for authorising the creation request and 
+%%      passing it on to the session manager for the actual object creation.
 %% @end 
 %% ----------------------------------------------------------------------------
--spec create_session(Config   :: config:handle(),
-                     Path     :: string(),
-                     UserInfo :: any(),
-                     Desc     :: sdp:session_description(),
-                     Options  :: [any()] ) -> {ok, ems:session()} | 'not_found' | 'not_authorised' | 'already_exists'.
-create_session(Config, Path, UserInfo, Desc, _Options) -> 
+-spec create_session(Config  :: config:handle(),
+                     Path    :: string(),
+                     User    :: ems:user_info(),
+                     Desc    :: sdp:session_description(),
+                     Options :: [any()] ) -> {ok, ems:session()} | 
+                                             'not_found' | 
+                                             'not_authorised' | 
+                                             'already_exists'.
+
+create_session(Config, Path, User, Desc, _Options) -> 
   case ems_config:get_mount_point(Config, Path) of 
     {ok, MountPoint} ->
-      Rights =  ems_config:get_user_rights(Config, UserInfo, MountPoint),
+      Rights = ems_config:get_user_rights(Config, User, MountPoint),
       case lists:member(broadcast, Rights) of
         true -> 
-          log:debug("ems_server:create_session/5 - user has broadcast rights for \"~s\"", [Path]),
-          {ok, Session} = ems_session:new(Path, Desc),
-          Channels = ems_session:collect_channels(Path, Session); %,
-%          case register_session(Path, Session, Channels) of
-%             ok -> {ok, Session};
-%             {error, Err} -> Err                
-%          end;
-        false -> 
+          log:debug("ems_server: user has broadcast rights for \"~s\"", [Path]),
+          case ems_session_manager:create_session(User, Path, Desc) of
+            {ok, Session} -> {ok, Session};
+            {error, Err} -> Err
+          end;
+
+        false ->
+          log:debug("ems_server: user has no broadcast rights for \"~s\"", [Path]),
           not_authorised
       end;
       
     _ -> 
-      log:debug("ems_server:create_session/5 - no such mount point", []),
+      log:debug("ems_server: no such mount point", []),
       not_found
   end.
-  
   
 %   Session = ems_session:new(Path, Desc),
 %    case ems_session_manager:register_session(Path, Session, UserInfo) of
@@ -128,6 +136,13 @@ init(State) ->
 %% @spec handle_call(Request,From,State) -> {noreply, State}
 %% @end
 %% ----------------------------------------------------------------------------
+-spec handle_call(Request :: term(), From :: pid(), State :: state()) ->
+        {reply, Reply :: term(), NewState :: state() } | 
+        {noreply, NewState :: state()}.
+
+handle_call(get_config, _From, State = #state{config = Config}) ->
+  {reply, Config, State};
+
 handle_call(_Request, _From, State) ->
   log:debug("ems_server:handle_call/3",[]),
   {noreply, State}.
@@ -135,9 +150,10 @@ handle_call(_Request, _From, State) ->
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen server in response to a cast (i.e. asynchronous)
 %%      request.
-%% @spec handle_cast(Request,From,State) -> {noreply,State}
 %% @end
 %% ----------------------------------------------------------------------------
+-spec handle_cast(Request :: term(), State :: state) -> 
+        {noreply, Reply :: term()}.
 handle_cast(_Request, State) ->
   log:debug("ems_server:handle_cast/2 ~w",[_Request]),
   {noreply, State}.
@@ -167,12 +183,8 @@ configure_rtsp_server(ConfigHandle, Config) ->
             {ports, Ps} -> Ps;
             false -> [554]
           end,
-
-  Handler = 
-    fun(Conn,Msg) -> 
-      ems_rtsp_bridge:handle_request(ConfigHandle, Conn, Msg) 
-    end,
-
+  Handler = fun(Conn, Msg) -> 
+              ems_rtsp_bridge:handle_request(ConfigHandle, Conn, Msg)
+            end,
   Bind = fun(P) -> rtsp:add_listener({0,0,0,0}, P, Handler) end,
   lists:foreach(Bind, Ports).
-

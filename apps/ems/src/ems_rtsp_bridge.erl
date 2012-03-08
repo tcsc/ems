@@ -1,7 +1,4 @@
--module (ems_rtsp_bridge).
-
 %% ============================================================================
-%% @author Trent Clarke <trent.clarke@gmail.com>
 %% @doc Acts as a bridge between the Internet-facing RTSP service and the 
 %%      internal media server. The idea is that the code in this module will 
 %%      translate the RTSP requests into something that the ems will understand
@@ -9,6 +6,8 @@
 %%      valid RTSP responsef for transmission backto the client.
 %% @end
 %% ============================================================================
+-module (ems_rtsp_bridge).
+-author("Trent Clarke <trent.clarke@gmail.com>").
 
 -export([handle_request/3]).
 -include("rtsp.hrl").
@@ -33,8 +32,12 @@ handle_request(Config, Conn, Msg) ->
   handle_request(Config, Conn, Sequence, Method, Uri, Msg).
 
 %% ----------------------------------------------------------------------------
+%% @doc The internal request handler. Takes a semi-unpacked request from the 
+%%      request handler callback and does the actual work.
+%% @private
+%% @end
 %% ----------------------------------------------------------------------------
--spec handle_request(Config :: ems_config:handle(), 
+-spec handle_request(Config :: ems_config:handle(),
                      Conn   :: rtsp:conn(), 
                      Seq    :: integer(), 
                      Method :: string(),
@@ -60,7 +63,7 @@ handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
       Desc = parse_sdp(Msg),
       {_, _, _, Path} = url:parse(Uri),
       Response = 
-        case ems_server:create_session(Config, Path, UserInfo, Desc, []) of
+        case ems_server:create_session(Path, UserInfo, Desc, []) of
           {ok, _} -> ok;
           already_exists -> method_not_valid;
           not_authorised -> throw(unathorized);
@@ -68,15 +71,9 @@ handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
         end,
       rtsp:send_response(Conn, Seq, Response, [], << >>)
     end,
-    
   rtsp:with_authenticated_user_do(Conn, Msg, LookupUser, Handler);
   
-%	Uri = Request#rtsp_request.uri,
-%	{_,_,_,Path} = url:parse(Uri),
-%	Config = get_config_handle(Conn),
-%	MountPoint = case ems_config:get_mount_point(Config, Path) of 
-
-handle_request(_, Conn, Seq, _Method, _, _) ->
+handle_request(_, Conn, Seq, _, _, _) ->
   rtsp:send_response(Conn, Seq, not_implemented, [], << >>).
 
 %% -----------------------------------------------------------------------------
@@ -104,8 +101,8 @@ get_user_info(Config, UserName) ->
   end.
 
 %% -----------------------------------------------------------------------------
-%% @doc Translates back & forth between the EMS user records and the format the 
-%%      RTSP service uses.
+%% @doc Translates back and forth between the EMS user records and the format 
+%%      the RTSP service uses.
 %% @end
 %% -----------------------------------------------------------------------------  
 -spec translate_user(User :: #user_info{} | #rtsp_user_info{}) -> 

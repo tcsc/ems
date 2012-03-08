@@ -1,7 +1,8 @@
 -module (ems_channel).
+-behaviour (gen_server).
+
 -include ("sdp.hrl").
 -record (state, {pid, stream, rtpmap, receiver}).
--behaviour (gen_server).
 
 %% ============================================================================
 %% gen_server callbacks
@@ -19,9 +20,10 @@
 
 %% ============================================================================
 %% @doc Creates and starts a new media distribution channel
-%% @spec new(StreamDesc) -> {ok, Pid, State} | error
-%% @end
 %% ============================================================================
+-spec start_link(Stream :: term(), RtpMap :: term()) ->
+        {ok, pid(), term()} | error.
+
 start_link(Stream, RtpMap) ->
 	log:debug("ems_channel:start_link/2", []),
 	State = #state{stream = Stream, rtpmap=RtpMap},
@@ -34,9 +36,9 @@ start_link(Stream, RtpMap) ->
 
 %% ============================================================================
 %% @doc Configures the chanel with the given settings 
-%% @spec configure_input(Pid, TransportSpec) -> {ok, ServerTransportSpec} 
 %% @end 
 %% ============================================================================
+-spec configure_input(pid(), term(), term()) -> {ok, term()}. 
 configure_input(Pid, Transport, ClientAddress) ->
   try 
     log:debug("ems_channel:configure_input/3", []),
@@ -91,12 +93,9 @@ handle_call(_Request, _From, State) ->
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen server in response to a cast (i.e. asynchronous)
 %%      request.
-%% @spec handle_cast(Request,From,State) -> {noreply,State}
+%% @spec handle_cast(Request,State) -> {noreply,State}
 %% @end
 %% ----------------------------------------------------------------------------  
-handle_call({stop_channel, _From}, State) ->
-  {stop, graceful_exit, State}.
-
 handle_cast(_Request, State) ->
 	log:debug("ems_channel:handle_cast/2 ~w",[_Request]),
 	{noreply, State}.

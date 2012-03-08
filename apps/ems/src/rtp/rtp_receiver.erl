@@ -51,8 +51,9 @@ start_link(ClockRate, TransportSpec, ClientAddress) ->
   end.
 
 %% ---------------------------------------------------------------------------- 
-%% @spec receiver_entrypoint(TransportSpec, OwnerPid) -> ok.
+%%
 %% ----------------------------------------------------------------------------  
+-spec receiver_entrypoint(integer(), [term()], term(),  pid()) -> ok.
 receiver_entrypoint(ClockRate, TransportSpec, RemoteAddress, OwnerPid) ->
   log:debug("rtp_receiver:receiver_entrypoint/3 - creating RTP sockets", []),
   
@@ -102,13 +103,9 @@ receiver_entrypoint(ClockRate, TransportSpec, RemoteAddress, OwnerPid) ->
     RtcpSocket).
   
 %% ---------------------------------------------------------------------------- 
-%% @spec receiver_loop(State, RtpSocket, RtcpSocket) ->
-%% where
-%%   State = state(),
-%%   RtpSocket = socket(),
-%%   RtcpSocket = socket()
-%% @end
+%%
 %% ----------------------------------------------------------------------------   
+-spec receiver_loop(state(), inet:socket(), inet:socket()) -> none().
 receiver_loop(State, RtpSocket, RtcpSocket) ->
   try
     receive
@@ -150,15 +147,16 @@ receiver_loop(State, RtpSocket, RtcpSocket) ->
 enable(Receiver) -> Receiver ! enable.
 
 %% ---------------------------------------------------------------------------- 
-%% @spec handle_enable(State) -> NewState
+%%
 %% ----------------------------------------------------------------------------   
+-spec handle_enable(state()) -> NewState :: state().
 handle_enable(State) ->
   log:debug("rtp_receiver:handle_enable/1 - starting RR timer", []),
   {ok, Timer} = timer:send_interval(1000, self(), send_rtcp_rr),
   State#state{rtcp_timer = Timer, enabled = true}.
 
 %% ---------------------------------------------------------------------------- 
-%% @spec handle_enable(State) -> NewState
+%%
 %% ----------------------------------------------------------------------------
 -spec send_rtcp_rr(State :: state(), RtcpSocket :: inet:socket()) -> 
   NewState :: state(). 

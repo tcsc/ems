@@ -4,9 +4,10 @@
 
 %% ----------------------------------------------------------------------------
 %% @doc The main entry point for the media server application
-%% @spec start(Type,Args) -> {ok, Pid} | {ok, Pid, State} | {error, Reason}
 %% @end
 %% ----------------------------------------------------------------------------
+-spec start(StartType :: atom(), term()) -> 
+        {ok, pid()} | {ok, pid(), State :: term()} | {error, Reason :: term()}.
 start(normal, _) ->
 	log:debug("ems:start/2", []),	
 

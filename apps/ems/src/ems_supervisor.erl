@@ -22,9 +22,9 @@
 
 %% ----------------------------------------------------------------------------
 %% @doc Starts the supervisor
-%% @spec start_link() -> {ok, Pid} | Error
-%% @end
 %% ----------------------------------------------------------------------------
+-spec start_link(ems_config:handle()) -> 
+        {ok, pid()} | {error, Reason :: term()}.
 start_link(Config) ->
 	log:info("ems_supervisor:start_link/1 - Starting EMS Supervisor", []),
 	case supervisor:start_link({local, ?SERVER}, ?MODULE, Config) of
@@ -42,8 +42,9 @@ start_link(Config) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @spec init([]) -> {ok, {SupervisorFlags, ChildSpec}}
+%%
 %% ----------------------------------------------------------------------------
+-spec init(ems_config:handle()) -> {ok, term()}.
 init(ConfigHandle) ->
 	log:info("ems_supervisor:init/1 - building child spec list", []),
 	

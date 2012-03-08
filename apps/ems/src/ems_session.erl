@@ -6,15 +6,18 @@
 %% ============================================================================
 %% Definitions
 %% ============================================================================
+-type nullary_fun() :: fun(()->any()). 
+
 -record(state, {id          :: integer(), 
                 path        :: string(),  
                 description :: sdp:session_description(), 
                 channels    :: [any()], 
-                clients     :: dict() }).
+                clients     :: dict(),
+                exit_funs   :: [nullary_fun()]}).
 -record(client, {id, subscriptions = []}).
 -record(subscription, {pid, path}).
 	
--export([start/2, start_link/2]).
+-export([start/2, start_link/2, collect_channels/2, for_each_channel/2, stop/1]).
 
 -type session() :: pid().
 -export_type([session/0]).
@@ -35,7 +38,8 @@
 %% Exports
 %% ============================================================================
 
--spec start(Path :: string(), Description :: sdp:session_description()) -> {'ok', session()}.
+-spec start(Path :: string(), Description :: sdp:session_description()) -> 
+        {'ok', session()}.
 start(Path, Description) -> 
   log:debug("session:new/2 - Creating session for ~s", [Path]),
   State = #state{path = Path, description = Description},
@@ -61,7 +65,7 @@ start_link(Id, Path) ->
 -type named_channel() :: {string(), any()}.
 -spec collect_channels(Session :: session(), Path :: string()) -> [named_channel()].
 collect_channels(Session, Root) ->
-  Channels = gen_server:call(Session, collect_channels),
+  Channels = gen_server:call(Session, collect_chddannels),
   F = fun(Ch) -> 
         Path = ems_channel:path(Ch),
         Addr = url:join_path(Root, Path),
@@ -74,6 +78,14 @@ collect_channels(Session, Root) ->
 %% ----------------------------------------------------------------------------    
 stop(SessionPid) ->
   SessionPid ! {self(), stop_ems_session}.
+
+%% ----------------------------------------------------------------------------
+%% @doc applies a function to each stream in the session
+%% ----------------------------------------------------------------------------
+-spec for_each_channel(session(), fun((term()) -> any())) -> any().
+for_each_channel(Session, F) ->
+  Channels = gen_server:call(Session, get_channels),
+  lists:foreach(Channels, F).
 
 %% ============================================================================
 %% gen_server callbacks
@@ -96,7 +108,9 @@ handle_cast(_Request, State) -> {noreply, State}.
 
 handle_info(_Msg, State) -> {noreply, State}.
 
-terminate(_Reason, State) -> {noreply, State}.
+terminate(_Reason, State) -> 
+  lists:foreach(fun(F) -> F() end, State#state.exit_funs),
+  {noreply, State}.
 
 code_change(_OldVersion, State, _Extra) -> {ok, State}.
 
@@ -187,8 +201,7 @@ get_or_create_client(Headers, State) ->
   end.
 
 %%----------------------------------------------------------------------------
-%% @spec
-%% @end
+%%
 %%----------------------------------------------------------------------------
 get_or_create_client(Headers, Id, State) ->
   case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
@@ -197,8 +210,6 @@ get_or_create_client(Headers, Id, State) ->
   end.
 
 %%----------------------------------------------------------------------------
-%% @spec create_client(State) -> {Client, NewState}
-%% @end
 %% ----------------------------------------------------------------------------
 create_client(State, Id) ->
   OldClients = State#state.clients,
@@ -207,8 +218,6 @@ create_client(State, Id) ->
   {Client, NewState}.
 
 %%----------------------------------------------------------------------------
-%% @spec get_client_session(State) -> Client
-%% @end
 %% ----------------------------------------------------------------------------
 get_client(Headers, State) when is_record(Headers, rtsp_message_header) ->
   case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of

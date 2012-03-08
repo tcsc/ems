@@ -88,7 +88,7 @@ err(Fmt,Args) -> log_server:log_message(?LOG_LEVEL_ERROR, Fmt, Args).
 err(Fmt) -> err(Fmt,[]).
 
 %% --------------------------------------------------------------------------
-%% @doc Formats & writes a fatal-level message to the default log.
+%% @doc Formats and writes a fatal-level message to the default log.
 %% --------------------------------------------------------------------------
 -spec fatal(string(), [term()]) -> any().
 fatal(Fmt,Args) -> log_server:log_message(?LOG_LEVEL_FATAL, Fmt, Args).

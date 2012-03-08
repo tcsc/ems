@@ -7,7 +7,7 @@
 %% ============================================================================
 %% Type definitions
 %% ============================================================================
--type svr() :: pid().
+-type server() :: pid().
 
 -record(listener, { 
   address  :: inet:ip_address(),
@@ -22,7 +22,7 @@
                  connections   :: [rtsp:conn()]
                }).
 -type state() :: #state{}.
--opaque([svr/0]).
+%-opaque([server/0]).
 
 
 %% ============================================================================
@@ -46,7 +46,7 @@
 %% @doc Starts the RTSP server
 %% @end
 %% ----------------------------------------------------------------------------
--spec start_link() -> {ok, svr()} | {error, any()}.
+-spec start_link() -> {ok, server()} | {error, any()}.
 start_link() ->
   log:debug("rtsp_server:start_link/1", []),
 

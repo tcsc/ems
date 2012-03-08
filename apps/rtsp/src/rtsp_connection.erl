@@ -95,6 +95,7 @@ init(State) ->
 %%                {next_state,NextStateName,NewStateData,Timeout} |
 %%                {next_state,NextStateName,NewStateData,hibernate} | 
 %%                {stop,Reason,NewStateData}
+%% @end
 %% ----------------------------------------------------------------------------
 handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, State) ->
   log:debug("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
@@ -278,9 +279,14 @@ handle_data(Data, State, reading_body) ->
   
   {Body, Remainder} = 
     case size(Data) of 
-      Len when Len =:= ContentLength -> {Data, << >>};
-      Len when Len < ContentLength -> split_binary(Data, ContentLength);
-      _ -> {<< >>, Data}
+      % if we have enough data in the buffer to satisfy the content length, then 
+      % extact the body and return it with the remainder. 
+      Len when Len =< ContentLength -> 
+        <<A:ContentLength/binary, B/binary>> = Data,
+        {A,B};
+
+      _ -> 
+        {<< >>, Data}
     end,
 
   case Body of
@@ -372,6 +378,7 @@ send_auth_response(Conn, Seq, Flags) ->
 %%       Header = {Name,Value} | {content_type, string()} | {sequence, int}
 %%       Name = string()
 %%       Value = string()
+%% @end
 %% ----------------------------------------------------------------------------
 build_response_headers(Sequence, ContentLength, Headers) ->
   ContentType = case lists:keyfind(content_type, 1, Headers) of
@@ -491,9 +498,9 @@ send_data(_State = #state{sender=SenderPid}, Data) ->
   
 %% ----------------------------------------------------------------------------
 %% @doc Starts the writer process for this connection
-%% @spec start_sender(ConnectionPid) -> SenderProcessPid
 %% @end
 %% ----------------------------------------------------------------------------
+-spec start_sender(pid(), inet:socket()) -> pid().
 start_sender(ConnectionPid, Socket) ->
   spawn_link(?MODULE, sender_loop, [ConnectionPid, Socket]).
 
