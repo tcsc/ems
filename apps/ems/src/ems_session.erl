@@ -1,19 +1,18 @@
 -module(ems_session).
 -behavior(gen_server).
 -include ("sdp.hrl").
--include("rtsp.hrl").
 
 %% ============================================================================
 %% Definitions
 %% ============================================================================
--type nullary_fun() :: fun(()->any()). 
-
 -record(state, {id          :: integer(), 
                 path        :: string(),  
                 description :: sdp:session_description(), 
                 channels    :: [any()], 
-                clients     :: dict(),
-                exit_funs   :: [nullary_fun()]}).
+                clients     :: dict()}).
+
+-type state() :: #state{}.
+
 -record(client, {id, subscriptions = []}).
 -record(subscription, {pid, path}).
 	
@@ -63,7 +62,8 @@ start_link(Id, Path) ->
 
 %% a collected channel and its address (i.e. path)
 -type named_channel() :: {string(), any()}.
--spec collect_channels(Session :: session(), Path :: string()) -> [named_channel()].
+-spec collect_channels(Session :: session(), Path :: string()) -> 
+  [named_channel()].
 collect_channels(Session, Root) ->
   Channels = gen_server:call(Session, collect_chddannels),
   F = fun(Ch) -> 
@@ -81,6 +81,7 @@ stop(SessionPid) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc applies a function to each stream in the session
+%% @end
 %% ----------------------------------------------------------------------------
 -spec for_each_channel(session(), fun((term()) -> any())) -> any().
 for_each_channel(Session, F) ->
@@ -92,13 +93,66 @@ for_each_channel(Session, F) ->
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%%
+%% @doc Starts a media session and all of the stream processes contained within 
+%%      it.
+%% @end
 %% ----------------------------------------------------------------------------    
-init(State) -> {ok, State}.
+-spec init(Description :: sdp:session_description()) -> 
+  {ok, State :: state()} | invalid_session.
+
+init(State = #state{description = Desc}) ->
+  
+  % define a lambda that we will use to map over the streams in the session 
+  % description to create channels for us
+  CreateChannel = 
+    fun(Stream) ->
+      % extract the RTP specifications for this stream from the session 
+      % description - the channel will need to know about these to do its 
+      % job
+      F = fun(Id) ->
+            case sdp:rtp_map(Id, Desc) of
+              false -> throw(invalid_session);
+              X -> X
+            end
+          end,
+      RtpFormats = lists:map(F, Stream#stream.formats),
+
+      % Start the channel for this stream. Linking to the channel means that
+      % if one of the subsequent channel creations fails then the already-
+      % created channels will automatically be killed when the session goes 
+      % down...
+      case ems_channel:start_link(Stream, RtpFormats, self()) of
+        {ok, Chan} -> Chan;
+        {error, _} -> throw({channel_failed, Stream}) 
+      end
+    end,
+
+  try
+    % map over the streams in the sesison description and create channels 
+    % for each of them
+    Channels = lists:map(CreateChannel, sdp:streams(Desc)),
+    StateP = State#state{channels = Channels},
+    {ok, StateP}
+  catch
+    throw:invalid_session -> 
+      log:debug("Invalid session description"),
+      {error, invalid_session};
+    throw:Err -> 
+      log:error("Stream setup failed: ~w", [Err]),
+      {error, Err}
+  end.
+
+
+-spec activate(ems:session()) -> ok | {error, Reason :: term()}.
+activate(Session) -> gen_server:call(activate, Session).
 
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
+handle_call(activate, _From, State = #state{channels = Channels}) ->
+  plists:parallel_map(fun ems_channel:activate/1, Channels),
+  {reply, ok, State};
+  
 handle_call({collect_channels, Root}, _From, State) -> 
   {reply, State#state.channels, State};
         
@@ -109,39 +163,10 @@ handle_cast(_Request, State) -> {noreply, State}.
 handle_info(_Msg, State) -> {noreply, State}.
 
 terminate(_Reason, State) -> 
-  lists:foreach(fun(F) -> F() end, State#state.exit_funs),
   {noreply, State}.
 
 code_change(_OldVersion, State, _Extra) -> {ok, State}.
 
-%% ----------------------------------------------------------------------------
-%% @doc Creates RTP distribution channels for each stream in the session
-%%      description.
-%% @spec create_channels(Desc) -> Result where
-%%       Desc = sdp_stream_description(),
-%%       Result = {ok, ChannelMap} | error,
-%%       ChannelMap = dictionary()
-%% @end
-%% ----------------------------------------------------------------------------
-create_channels(_Desc = #session_description{streams = Streams, 
-                                             rtp_map = RtpMap,
-                                             format_map = _Formats}) ->
-  Result = lists:map(
-    fun (Stream = #media_stream{formats = FormatIndex}) ->
-      RtpMapEntry = case lists:keyfind(FormatIndex, 1, RtpMap) of
-        false -> throw({ems_session, missing_rtpmap_entry});
-        Entry -> Entry
-      end,
-			
-      case ems_channel:start_link(Stream, RtpMapEntry) of
-        {ok, ChannelPid} -> ChannelPid
-      end,
-			
-			{Stream#media_stream.control_uri, ChannelPid}
-		end,
-	  Streams),
-	{ok, dict:from_list(Result)}.
-	
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------	
@@ -150,91 +175,7 @@ destroy_channels(State) ->
   dict:map(F, State#state.channels),
   ok.
   
-%% ----------------------------------------------------------------------------
-%% @doc Sets up an RTP data stream
-%% @spec setup_stream(ClientSessionId, Direction, StreamName, Transport, State) -> Result
-%%       Direction = inbound | outbound
-%%       StreamName = string()
-%%       ClientTransport = list()
-%%       State = term()
-%%       Result = {ServerTransport, NewState}
-%% @end
-%% ----------------------------------------------------------------------------  
-
-% Handles the inbound stream case - setting up the stream manager and getting
-% it ready to receive RTP data from the broadcaster
-setup_stream(ClientAddress, Headers, StreamName, ClientTransport, State) ->
-  
-  log:debug("ems_session:setup_stream/5", []),
-  
-  case dict:find(StreamName, State#state.channels) of
-    {ok, ChannelPid} -> 
-      Direction = case lists:keyfind(direction, 1, ClientTransport) of
-        {direction, Dir} -> Dir;
-        false -> outbound
-      end,
-                  
-      case Direction of 
-        inbound ->
-          log:debug("ems_session:setup_stream/5 - setting up inbound stream", []),
-          {Client, NewState} = get_or_create_client(Headers, State#state.id, State),
-          
-          {ok, ServerTransport} = ems_channel:configure_input(ChannelPid, ClientTransport, ClientAddress),
-          SessionHeader = stringutils:int_to_string(Client#client.id),
-          {SessionHeader, ServerTransport, save_subscription(Client, StreamName, ChannelPid, NewState)};
-          
-        outbound -> throw({ems_session, not_implemented})
-      end;
-            
-    error -> 
-      throw({ems_server, not_found})
-  end.
-
-%%----------------------------------------------------------------------------
-%% @spec get_or_create_client(Headers, State) -> {Client, NewState}
-%% @end
-%%----------------------------------------------------------------------------
-get_or_create_client(Headers, State) ->
-  case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
-    undefined -> create_client(State, random:uniform(99999999));
-    SessionId -> {get_client(SessionId, State), State}
-  end.
-
-%%----------------------------------------------------------------------------
-%%
-%%----------------------------------------------------------------------------
-get_or_create_client(Headers, Id, State) ->
-  case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
-    undefined -> create_client(State, Id);
-    SessionId -> {get_client(SessionId, State), State}
-  end.
-
-%%----------------------------------------------------------------------------
-%% ----------------------------------------------------------------------------
-create_client(State, Id) ->
-  OldClients = State#state.clients,
-  Client = #client{id = Id},
-  NewState = State#state{clients = dict:store(Id, Client, OldClients)}, 
-  {Client, NewState}.
-
-%%----------------------------------------------------------------------------
-%% ----------------------------------------------------------------------------
-get_client(Headers, State) when is_record(Headers, rtsp_message_header) ->
-  case rtsp:get_header(Headers, ?RTSP_HEADER_SESSION) of
-    undefined -> throw({ems_session, bad_request});
-    Header -> get_client(Header, State)
-  end;
-  
-get_client(SessionId, State) when is_list(SessionId) ->
-  get_client(list_to_integer(SessionId), State);
-  
-get_client(SessionId, State) when is_integer(SessionId) ->
-  case dict:find(SessionId, State#state.clients) of
-    {ok, Client} -> Client;
-    error -> throw({ems_session, session_not_found})
-  end.
-
-%%----------------------------------------------------------------------------
+%% ----------------------------------------------------------------------------      
 %%
 %% ----------------------------------------------------------------------------      
 save_subscription(Client, StreamPath, SubscribedPid, State) ->

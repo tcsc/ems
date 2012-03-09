@@ -1,6 +1,6 @@
 -module (sdp).
 -author ("Trent Clarke <trent.clarke@gmail.com>").
--export([parse/1, format/1]).
+-export([parse/1, format/1, streams/1, rtp_map/2]).
 -include("sdp.hrl").
 
 % =============================================================================
@@ -8,14 +8,28 @@
 % =============================================================================
 
 -type media_type() :: 'audio' | 'video' | 'application' | 'data' | 'control'.
--type session_description() :: #session_description{}.
--export_type([media_type/0, session_description/0]).
+-type description() :: #description{}.
+
+-type rtp_map() :: #rtp_map{id :: integer(),
+                            encoding :: string(),
+                            clock_rate :: integer(),
+                            options :: string()}.
+
+-type stream() :: #stream{type           :: media_type(), 
+                          ports          :: [integer()],
+                          transport      :: [term()],
+                          formats        :: [integer()],
+                          attributes     :: [{Name::string(), Value::string()}],
+                          control_uri    :: string(),
+                          bandwidth_info :: term()}. 
+
+-export_type([media_type/0, description/0, stream/0]).
 
 % =============================================================================
-% Exported functions
+% Public API
 % =============================================================================  
 
--spec parse(string() | binary()) -> {'ok', session_description()} | 'fail'.
+-spec parse(string() | binary()) -> {'ok', description()} | 'fail'.
 
 parse(Body) when is_binary(Body) ->
   Text = utf:utf8_to_string(Body),
@@ -23,7 +37,8 @@ parse(Body) when is_binary(Body) ->
   
 parse(Text) ->
   try
-    Lines = lists:map(fun parse_line/1, re:split(Text, <<"\r\n">>, [trim, {return,list}])),
+    Lines = lists:map(fun parse_line/1, 
+                      re:split(Text, <<"\r\n">>, [trim, {return,list}])),
   
     SessionBlock = extract_til_stream(Lines),
     Attributes = extract_attributes(SessionBlock),
@@ -34,20 +49,44 @@ parse(Text) ->
     FormatMap = extract_format_map(Lines),
     Streams = collect_media_streams(Lines),
   
-    Desc = #session_description{ name = Name,
-                                 info = Info,
-                                 attributes = Attributes,
-                                 streams = Streams, 
-                                 rtp_map = RtpMap, 
-                                 format_map = FormatMap },
+    Desc = #description{ name = Name,
+                         info = Info,
+                         attributes = Attributes,
+                         streams = Streams, 
+                         rtp_map = RtpMap, 
+                         format_map = FormatMap },
     {ok, Desc}
   catch
     fail -> fail
   end.
-      
--spec format( session_description() ) -> binary().
+
+%% ----------------------------------------------------------------------------
+%% @doc Formats an SDP session description as a ready-to-send byte stream 
+%% @end
+%% ----------------------------------------------------------------------------
+-spec format( description() ) -> binary().
 format(Description) ->
   <<>>.
+
+%% ----------------------------------------------------------------------------
+%% @doc Fetches the list of streams from a session description 
+%% @end
+%% ----------------------------------------------------------------------------
+streams(Desc) -> 
+  Desc#description.streams.
+
+%% ----------------------------------------------------------------------------
+%% @doc Fetches an RTP map entry with the appropriate id number from the 
+%%      session description. Returns false if no such RTP map entry is found. 
+%% @end
+%% ----------------------------------------------------------------------------
+-spec rtp_map(Id :: integer(), Desc :: description()) ->
+  rtp_map() | false.
+
+rtp_map(Id, Desc) ->
+  RtpMap = Desc#description.rtp_map,
+  lists:keyfind(Id, 1, RtpMap).
+
   
 % =============================================================================
 % Internal Fuctions
@@ -234,13 +273,13 @@ collect_media_streams([Line|Lines], Streams)
              false -> undefined
            end,
   
-  StreamRecord = #media_stream{ type = Type,
-                               ports = Ports,
-                               transport = Transport,   
-                               formats = Formats,
-                               attributes = Attributes,
-                               control_uri = ControlUri, 
-                               bandwidth_info = BwInfo },
+  StreamRecord = #stream{type = Type,
+                         ports = Ports,
+                         transport = Transport,   
+                         formats = Formats,
+                         attributes = Attributes,
+                         control_uri = ControlUri, 
+                         bandwidth_info = BwInfo },
   collect_media_streams(Lines, [StreamRecord | Streams]);
 
 collect_media_streams([Line|Lines], Streams) ->

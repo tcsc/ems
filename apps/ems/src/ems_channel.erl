@@ -1,12 +1,8 @@
 -module (ems_channel).
 -behaviour (gen_server).
-
 -include ("sdp.hrl").
--record (state, {pid, stream, rtpmap, receiver}).
 
-%% ============================================================================
-%% gen_server callbacks
-%% ============================================================================
+% gen_server exports ----------------------------------------------------------
 -export([
   init/1, 
   handle_call/3, 
@@ -16,17 +12,36 @@
   code_change/3
 	]).
 	
--export ([start_link/2, configure_input/3, stop/1]).
+% public API exports ----------------------------------------------------------
+-export ([start_link/3, configure_input/3, activate/1, stop/1]).
 
 %% ============================================================================
-%% @doc Creates and starts a new media distribution channel
+%% Type definitions
 %% ============================================================================
--spec start_link(Stream :: term(), RtpMap :: term()) ->
+-record (state, {parent :: ems:session(), 
+                 stream :: sdp:stream(), 
+                 rtp_map :: sdp:rtp_map(),
+                 uri :: string(),
+                 receiver :: term()}).
+
+-type state() :: #state{}.
+
+%% ============================================================================
+%% Public API 
+%% ============================================================================
+
+%% ----------------------------------------------------------------------------
+%% @doc Creates and starts a new media distribution channel
+%% @end
+%% ----------------------------------------------------------------------------
+-spec start_link(Stream :: sdp:media_stream(),
+                 RtpMap :: [sdp:rtp_map()],
+                 Parent :: ems:session()) ->
         {ok, pid(), term()} | error.
 
-start_link(Stream, RtpMap) ->
-	log:debug("ems_channel:start_link/2", []),
-	State = #state{stream = Stream, rtpmap=RtpMap},
+start_link(Stream, RtpMap, Parent) ->
+	log:debug("ems_channel:start_link/3 - creating channel"),
+	State = #state{parent = Parent, stream = Stream, rtp_map = RtpMap},
 	case gen_server:start_link(?MODULE, State, []) of
 		{ok, Pid} -> {ok, Pid};
 		Error -> 
@@ -34,11 +49,13 @@ start_link(Stream, RtpMap) ->
 			Error
 	end.
 
-%% ============================================================================
-%% @doc Configures the chanel with the given settings 
+%% ----------------------------------------------------------------------------
+%% @doc Configures the channel with the given settings. I still need to work 
+%%      out exactly what it is I need to know at this point... 
 %% @end 
-%% ============================================================================
+%% ----------------------------------------------------------------------------
 -spec configure_input(pid(), term(), term()) -> {ok, term()}. 
+
 configure_input(Pid, Transport, ClientAddress) ->
   try 
     log:debug("ems_channel:configure_input/3", []),
@@ -48,6 +65,10 @@ configure_input(Pid, Transport, ClientAddress) ->
 	  _Type:Err -> {error, Err}
   end.
 
+-spec activate(Channel :: ems:channel()) -> ok | {error, Reason::term()}.
+activate(Channel) ->
+  gen_server:call(activate, Channel).
+  
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
@@ -62,10 +83,8 @@ stop(Pid) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
-  log:debug("ems_channel:init/1 - starting channel for ~s", 
-    [Stream#media_stream.control_uri]),
-  process_flag(trap_exit, true),
+init(Args = #state{uri = Uri}) ->
+  log:debug("ems_channel:init/1 - starting channel for ~s", [Uri]),
   {ok, Args}.
 
 %% ----------------------------------------------------------------------------
@@ -74,18 +93,29 @@ init(Args = #state{stream = Stream, rtpmap = _RtpMap}) ->
 %% @spec handle_call(Request,From,State) -> {noreply, State}
 %% @end
 %% ----------------------------------------------------------------------------
+-type call_request() :: {configure, [term()], term()} | activate.
+-spec handle_call(call_request(), From :: pid(), State :: state()) ->
+  {reply, Reply :: term(), NewState :: state()}.
+
 handle_call({configure, TransportSpec, ClientAddress}, _From, State) ->
   log:debug("ems_channel:handle_call/3 - handling stream configure", []),
 
-  {_,RtpInfo} = State#state.rtpmap,
+  {_,RtpInfo} = State#state.rtp_map,
   
   {RtpReceiverPid, ServerTransportSpec} = 
-    rtp_receiver:start_link(RtpInfo#rtp_map.clock_rate, TransportSpec, ClientAddress),
+    rtp_receiver:start_link(RtpInfo#rtp_map.clock_rate, 
+                            TransportSpec, 
+                            ClientAddress),
                           
-  log:debug("ems_channel:handle_call/3 - Server Transport Spec: ~w", [ServerTransportSpec]),  
+  log:debug("ems_channel:handle_call/3 - Server Transport Spec: ~w", 
+            [ServerTransportSpec]),  
   NewState = State#state{receiver = RtpReceiverPid},
   {reply, {ok, ServerTransportSpec}, NewState};
-  
+
+% Handles an activation request from a client
+handle_call(activate, _From, State) ->
+  {reply, ok, State};
+
 handle_call(_Request, _From, State) ->
 	log:debug("ems_channel:handle_call/3",[]),
 	{noreply, State}.

@@ -82,7 +82,7 @@ create_session(Config, Path, User, Desc, _Options) ->
     {ok, MountPoint} ->
       Rights = ems_config:get_user_rights(Config, User, MountPoint),
       case lists:member(broadcast, Rights) of
-        true -> 
+        true ->
           log:debug("ems_server: user has broadcast rights for \"~s\"", [Path]),
           case ems_session_manager:create_session(User, Path, Desc) of
             {ok, Session} -> {ok, Session};

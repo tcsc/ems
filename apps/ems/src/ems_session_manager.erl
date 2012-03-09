@@ -8,10 +8,13 @@
 
 -type object_type() :: session | channel.
 -record(named_object, {type :: object_type(), path :: string(), pid :: pid()}).
--type named_object() :: #named_object{}.
+-type named_object() :: #named_object{type :: object_type(),
+                                      path :: string(),
+                                      pid :: pid()}.
 
 -record(state, {table :: ets:tid(), config :: ems_config:handle()}).
--type state() :: #state{}.
+-type state() :: #state{table :: ets:tid(),
+                        config :: ems_config:handle()}.
 
 %% gen_server exports --------------------------------------------------------- 
 -export([init/1, 
@@ -32,6 +35,7 @@
 
 %% ----------------------------------------------------------------------------
 %% @doc Starts the session manager
+%% @end
 %% ----------------------------------------------------------------------------
 start_link() -> 
   log:debug("ems_session_manager:start_link/0",[]),
@@ -82,6 +86,7 @@ create_session(User, Path, Desc) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc 
+%% @end
 %% ----------------------------------------------------------------------------
 -spec lookup_object(Path :: string()) -> 
         {session, pid()} | {channel, pid()} | false.
@@ -101,6 +106,7 @@ lookup_object(Path) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Startup function for the session manager
+%% @end
 %% ----------------------------------------------------------------------------
 init(_Args) ->
   log:debug("ems_session_manager:init/1"),
@@ -118,10 +124,11 @@ init(_Args) ->
   
 %% ----------------------------------------------------------------------------
 %% @doc Handles a synchronous request
+%% @end
 %% ----------------------------------------------------------------------------
   
 handle_call({register, NamedItems}, _, State = #state{table = Table}) ->
-  case ets:insert_new(Table, NamedItems) of 
+  case ets:insert_new(Table, NamedItems) of
     true -> {reply, ok, State};
     false -> {reply, error, "Insert failed"}
   end;
@@ -132,6 +139,7 @@ handle_call(_Request, _From, State) ->
   
 %% ----------------------------------------------------------------------------
 %% @doc Handles an asynchronous request
+%% @end
 %% ----------------------------------------------------------------------------
 
 % The default implementation. Does nothing.
@@ -141,6 +149,7 @@ handle_cast(_Request, State) ->
   
 %% ----------------------------------------------------------------------------
 %% @doc Handles a message not sent by the call or cast methods
+%% @end
 %% ----------------------------------------------------------------------------
 handle_info({'DOWN', _Ref, process, Pid, _Reason},  
             State = #state{table = Table}) ->
