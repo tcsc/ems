@@ -72,7 +72,8 @@ close(Conn) ->
   gen_fsm:sync_send_all_state_event(Conn, quit).
 
 take_socket(Conn, Socket) ->
-  log:debug("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", [Conn]),
+  log:debug("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", 
+            [Conn]),
   ok = gen_tcp:controlling_process(Socket, Conn),
   
   log:debug("rtsp_connection:take_socket/2 - forwarding socket to connection"),
@@ -86,7 +87,7 @@ get_client_address(Conn) ->
 %% gen_fsm API
 %% ============================================================================
 init(State) -> 
-  log:debug("rtsp_connection:init/1", []),
+  log:debug("rtsp_connection:init/1"),
   {ok, waiting_for_socket, State}.
 
 %% ----------------------------------------------------------------------------
@@ -97,19 +98,25 @@ init(State) ->
 %%                {stop,Reason,NewStateData}
 %% @end
 %% ----------------------------------------------------------------------------
-handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, StateName, State) ->
+handle_event({send_response, Sequence, Status, ExtraHeaders, Body}, 
+             StateName, 
+             State) ->
+
   log:debug("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
     [Sequence, Status]),
 
   StateP = case deregister_pending_request(Sequence, State) of 
-    {Msg, S} -> Rq = Msg#rtsp_message.message,
-                RtspVersion = Rq#rtsp_request.version,
-                AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
-                Response = #rtsp_response{status = Status, version = RtspVersion}, 
-                Bytes = rtsp:format_message(Response, AllHeaders, Body),
-                send_data(S, Bytes),
-                S;
-    _ -> State
+    {Msg, S} -> 
+      Rq = Msg#rtsp_message.message,
+      RtspVersion = Rq#rtsp_request.version,
+      AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
+      Response = #rtsp_response{status = Status, version = RtspVersion}, 
+      Bytes = rtsp:format_message(Response, AllHeaders, Body),
+      send_data(S, Bytes),
+      S;
+
+    _ -> 
+      State
   end,
   {next_state, StateName, StateP};
 
@@ -119,26 +126,38 @@ handle_event(_Event, StateName, StateData) ->
 
 %% ----------------------------------------------------------------------------
 %% @doc Handles process events
+%% @end
 %% ----------------------------------------------------------------------------
 handle_info({tcp, Socket, Data}, 
             State, 
             StateData = #state{pending_data = PendingData}) ->
   log:trace("rtsp_connection:handle_info/3"),
 
-  % combine the newly-arrived data with the stuff leftover from the last reqest
-  AccumulatedData = list_to_binary([PendingData, Data]),
+  try
+    % combine the newly-arrived data with the stuff leftover from the last 
+    % reqest
+    AccumulatedData = list_to_binary([PendingData, Data]),
   
-  % process what we can of the data and get whatever's left back
-  {ok, NewState, NewStateData, Leftovers} = 
-    handle_data(AccumulatedData, StateData, State),
+    % process what we can of the data and get whatever's left back
+    {ok, NewState, NewStateData, Leftovers} = 
+      handle_data(AccumulatedData, StateData, State),
     
-  % update the connection state with the leftovers from the processing
-  NewNewStateData = 
-    NewStateData#state{pending_data=Leftovers},
+    % update the connection state with the leftovers from the processing
+    NewNewStateData = 
+      NewStateData#state{pending_data=Leftovers},
     
-  % reset the socket so that it pings us again when more data arrives
-  inet:setopts(Socket, [{active,once}]),
-  {next_state, NewState, NewNewStateData};
+    % reset the socket so that it pings us again when more data arrives
+    inet:setopts(Socket, [{active,once}]),
+    {next_state, NewState, NewNewStateData}
+  catch
+    throw:bad_request ->
+      send_response(self(), -1, bad_request, [], << >>),
+      {stop, normal, StateData};
+
+    _:_ -> 
+      send_response(self(), -1, internal_server_error, [], << >>),
+      {stop, normal, StateData}
+  end;
 
 handle_info({tcp_closed, _Socket}, _StateName, State) ->
   log:debug("rtsp_connection:handle_info/3 - tcp connection closed",[]),
@@ -149,7 +168,8 @@ handle_info({sender_waiting, _SendingPid}, StateName, StateData) ->
   {next_state, StateName, StateData};
 
 handle_info(Info, StateName, StateData) ->
-  log:debug("rtsp_connection:handle_info/3 ~w, ~w, ~w", [Info, StateName, StateData]),
+  log:debug("rtsp_connection:handle_info/3 ~w, ~w, ~w", 
+            [Info, StateName, StateData]),
   {next_state, StateName, StateData}.
 
 %% ----------------------------------------------------------------------------
@@ -238,8 +258,10 @@ handle_data(<<$$:8, _Channel:8, Size:16/big, Data/binary>>, StateData, ready) ->
   if size(Data) >= Size -> 
     % extract the packet from the data stream;
     <<_Packet:Size/binary, Remainder/binary>> = Data,
-      % do what you have to with the packet data
-      handle_data(Remainder, StateData, ready);
+    
+    % do what you have to with the packet data
+    handle_data(Remainder, StateData, ready);
+
     true -> 
       {ok, ready, StateData, Data}
   end;
@@ -252,15 +274,15 @@ handle_data(Data, StateData, ready) ->
       case rtsp:parse_message(Message) of
         RtspMsg ->
           case rtsp:message_content_length(RtspMsg) of
-            % content length is zero, so we can just pass the message on to the server
-            % without further ado  
+            % content length is zero, so we can just pass the message on to the 
+            % server without further ado  
             0 -> 
               NewState = dispatch_message(RtspMsg, StateData),
               {ok, ready, NewState, Remainder};
           
-            % content length is nonzero, so we need to read the body data. Save the
-            % request into the connection state and go around again - but this time
-            % in the reading_body state.  
+            % content length is nonzero, so we need to read the body data. Save
+            % the request into the connection state and go around again - but
+            % this time in the reading_body state.  
             _ -> 
               NewState = StateData#state{pending_message = RtspMsg},
               handle_data(Remainder, NewState, reading_body)
@@ -324,7 +346,7 @@ dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
       Me       = self(),
       Callback = State#state.callback, 
       Handler  =
-        fun() -> 
+        fun() ->           
           try 
             Callback(Me, Msg)
           catch
@@ -332,7 +354,7 @@ dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
             {unauthorized, _} -> send_auth_response(Me, Seq);
             bad_request  -> send_response(Me, Seq, bad_request, [], << >>);
             Err -> send_server_error(Me, Err, Seq)
-          end
+          end 
         end,
       erlang:spawn(Handler),
       StateP
