@@ -1,5 +1,5 @@
 -module(url).
--export([parse/1]).
+-export([parse/1, join/2]).
 
 %% ----------------------------------------------------------------------------
 %% Data types
@@ -45,7 +45,7 @@ parse_http(Scheme, DefaultPort, Uri) ->
       case string:chr(Host, $:) of
         0 -> 
           %% No port spec is present in the url - assume that it's port 80 and
-          %% return it
+          %% return that 
           {Scheme, Host, DefaultPort, Path};
           
         M ->
@@ -57,3 +57,17 @@ parse_http(Scheme, DefaultPort, Uri) ->
           {Scheme, Server, Port, Path}
       end
   end.
+
+join(Base, []) -> Base;
+join(Base, [H|Rest]) ->
+  Leaf = case lists:member(H, [$/, $?]) of
+           true -> [H|Rest];
+           false -> [$/|[H|Rest]]
+         end,
+
+  [First | BaseP] = lists:reverse(Base),
+  BasePP = case First of
+             $/ -> lists:reverse(BaseP);
+             _ -> Base 
+           end,
+  string:concat(BasePP, Leaf).

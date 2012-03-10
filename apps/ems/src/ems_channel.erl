@@ -13,7 +13,11 @@
 	]).
 	
 % public API exports ----------------------------------------------------------
--export ([start_link/3, configure_input/3, activate/1, stop/1]).
+-export ([start_link/3,
+          get_path/1,
+          configure_input/3, 
+          activate/1, 
+          stop/1]).
 
 %% ============================================================================
 %% Type definitions
@@ -67,15 +71,22 @@ configure_input(Pid, Transport, ClientAddress) ->
 
 -spec activate(Channel :: ems:channel()) -> ok | {error, Reason::term()}.
 activate(Channel) ->
-  gen_server:call(activate, Channel).
+  gen_server:call(Channel, activate).
   
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------  
-stop(Pid) ->
+stop(Channel) ->
   log:debug("ems_channel:stop/1", []),
-  gen_server:cast(Pid, {stop_chanel, self()}).
-  
+  gen_server:cast(Channel, {stop_chanel, self()}).
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------  
+get_path(Channel) ->
+  {ok, Path} = gen_server:call(Channel, get_path),
+  Path.
+
 %% ============================================================================
 %% gen_server callbacks
 %% ============================================================================
@@ -90,7 +101,6 @@ init(Args = #state{uri = Uri}) ->
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen_server in response to a call message. Does nothing at 
 %%      this point.
-%% @spec handle_call(Request,From,State) -> {noreply, State}
 %% @end
 %% ----------------------------------------------------------------------------
 -type call_request() :: {configure, [term()], term()} | activate.
@@ -115,6 +125,11 @@ handle_call({configure, TransportSpec, ClientAddress}, _From, State) ->
 % Handles an activation request from a client
 handle_call(activate, _From, State) ->
   {reply, ok, State};
+
+handle_call(get_path, _From, State) ->
+  Stream = State#state.stream,
+  Path = Stream#stream.control_uri,
+  {reply, {ok, Path}, State};
 
 handle_call(_Request, _From, State) ->
 	log:debug("ems_channel:handle_call/3",[]),

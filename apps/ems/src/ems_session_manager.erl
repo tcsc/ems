@@ -44,8 +44,7 @@ start_link() ->
 %% ----------------------------------------------------------------------------
 %% @doc Creates and registers a session with the session manager. It is assumed 
 %%      that the user has already been authenticated and validated by this 
-%%      point.
-%% @end
+%%      po%% @end
 %% ----------------------------------------------------------------------------
 -spec create_session(User :: ems:user_info(), 
                      Path :: string(), 
@@ -53,36 +52,8 @@ start_link() ->
         {ok, ems:session()} | {error, term()}.
 
 create_session(User, Path, Desc) ->
-  log:debug("session_manager:create_session/3 - Creating session at ~w", [Path]),
-  case ems_session:new(User, Path, Desc) of
-    {ok, Session} -> 
-      log:debug("session_manager:create_session/3 - Created."),
-      Channels = ems_session:collect_channels(Path, Session),
-      NamedSession = #named_object{type = session, path = Path, pid = Session},
-      Fun = fun({P,C}) -> 
-              #named_object{type = channel, path = P, pid = C} 
-            end, 
-      Names = [NamedSession | lists:map(Channels, Fun)],
-      
-      log:debug("session_manager:create_session/3 - Registering."),
-      case gen_server:call(ems_session_manager, {register, Names}) of
-        ok ->
-          % monitor the sessions so that we can remove the registrations when 
-          % the processes they reference die 
-          Monitor = fun(_ = #named_object{pid = Pid}) -> 
-                      erlang:monitor(Pid)
-                    end,
-          list:foreach(Monitor, Names),
-          {ok, Session};
-
-        {error, Err} -> 
-          log:error("session_manager:create_session/2 - Registration failed"),
-          ems_session:stop(Session),
-          {error, Err}
-      end;
-    Err -> {error, Err}
-  end.
-
+  log:debug("session_manager:create_session/3 - Creating session at ~s", [Path]),
+  gen_server:call(ems_session_manager, {create_session, User, Path, Desc}).
 
 %% ----------------------------------------------------------------------------
 %% @doc 
@@ -126,11 +97,46 @@ init(_Args) ->
 %% @doc Handles a synchronous request
 %% @end
 %% ----------------------------------------------------------------------------
-  
-handle_call({register, NamedItems}, _, State = #state{table = Table}) ->
-  case ets:insert_new(Table, NamedItems) of
-    true -> {reply, ok, State};
-    false -> {reply, error, "Insert failed"}
+
+% the internal handler for creating a session
+handle_call({create_session, User, Path, Desc}, 
+            _From, 
+            State = #state{table = Table}) ->
+  case ems_session:start_link(User, Path, Desc) of
+    {ok, Session} ->
+
+      % collect the steams and he session name and prepare them for being 
+      % registered
+      NamedSession = #named_object{type = session, path = Path, pid = Session},
+      Fun = fun({P,C}) -> 
+              #named_object{type = channel, path = P, pid = C} 
+            end, 
+      Channels = ems_session:get_channels(Session),
+      NamedObjects = [NamedSession | lists:map(Fun, Channels)],
+      
+      % monitor the sessions so that we can remove the registrations when 
+      % the processes they reference die 
+      Monitor = 
+        fun(_ = #named_object{pid = Pid}) -> 
+          erlang:monitor(process, Pid)
+        end,
+      lists:foreach(Monitor, NamedObjects),
+
+      % Add the set of names we want to register, explicitly failing if 
+      % there is an entry already with that name
+      log:debug("session_manager:handle_call/3 - Registering."),
+      case ets:insert_new(Table, NamedObjects) of
+        true -> {reply, {ok, Session}, State};
+        false -> 
+          log:debug("session_manager:handle_call/3 - Registration failed."),
+          ems_session:stop(Session),
+          {reply, error, "Insert failed"}
+      end;
+
+    Err -> 
+      log:debug("session_manager:handle_call/3 - failed to create session: ~w", 
+                [Err]),
+      {reply, {error, Err}, State}
   end;
 
 % the default implementation - does nothing
@@ -151,12 +157,22 @@ handle_cast(_Request, State) ->
 %% @doc Handles a message not sent by the call or cast methods
 %% @end
 %% ----------------------------------------------------------------------------
+
+% handles the notification that one of the processes we're monitoring has died
+% by removing the process from the sessions and channels ets lookup table
 handle_info({'DOWN', _Ref, process, Pid, _Reason},  
             State = #state{table = Table}) ->
   log:debug("ems_session_manager:handle_info/2 - Pid ~p has quit", [Pid]),
-  ets:delete_match(Table, {named_object, '_', '_', Pid}),
+  ets:match_delete(Table, {named_object, '_', '_', Pid}),
   {noreply, State};
-  
+
+% handles the notification that a session process has died. Any session-specific 
+% cleanup code goes here.
+handle_info({'EXIT', Pid, _Reason}, State) ->
+  log:debug("ems_session_manager:handle_info/2 - Session ~p has exited", [Pid]),
+  {noreply, State};
+
+% Generic handler for all other unexpected messages
 handle_info(_Info, State) ->
   log:debug("ems_session_manager:handle_info/2 - ~w", [_Info]),
   {noreply, State}.

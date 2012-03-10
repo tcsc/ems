@@ -24,3 +24,14 @@ parse_http_default_port_test() ->
 parse_unknown_scheme_test() ->
   ?assertEqual({error,unknown}, url:parse("narf://something@strange")).
 
+simple_concat_test() ->
+  ?assertEqual("http://localhost/root/leaf", 
+               url:join("http://localhost/root", "leaf")).
+
+trailing_separator_test() ->
+  ?assertEqual("http://localhost/root/leaf", 
+               url:join("http://localhost/root/", "leaf")).
+
+query_string_test() ->
+  ?assertEqual("http://localhost/root?name=value",
+               url:join("http://localhost/root", "?name=value")).

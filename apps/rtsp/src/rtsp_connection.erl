@@ -486,7 +486,7 @@ with_authenticated_user_do(Conn, Request, PwdCallback, Action) ->
                  end,
       UserName = rtsp_authentication:get_user_name(AuthInfo),
       
-      log:debug("rtsp_connection:with_authenticated_user_do/4 - authenticating user \"~s\"", 
+      log:debug("rtsp_connection:with_authenticated_user_do/4 - authenticating \"~s\"", 
         [UserName]),
       case PwdCallback(UserName) of
         false ->

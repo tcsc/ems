@@ -15,8 +15,9 @@
 
 -record(client, {id, subscriptions = []}).
 -record(subscription, {pid, path}).
-	
--export([start/2, start_link/2, collect_channels/2, for_each_channel/2, stop/1]).
+
+% Public API ------------------------------------------------------------------
+-export([start_link/3, get_channels/1, for_each_channel/2, stop/1]).
 
 -type session() :: pid().
 -export_type([session/0]).
@@ -37,22 +38,15 @@
 %% Exports
 %% ============================================================================
 
--spec start(Path :: string(), Description :: sdp:session_description()) -> 
-        {'ok', session()}.
-start(Path, Description) -> 
-  log:debug("session:new/2 - Creating session for ~s", [Path]),
-  State = #state{path = Path, description = Description},
-  {ok, gen_server:start(?MODULE, State, [])}.
+-spec start_link(User :: ems:user_info(), 
+                 Path :: string(), 
+                 Description :: sdp:session_description()) -> 
+                   {'ok', session()}.
 
-%% ----------------------------------------------------------------------------
-%% @doc Starts a new session and returns the new session's process identifier.
-%% @end
-%% ----------------------------------------------------------------------------
--spec start_link(Id::integer(), Path::string()) -> pid().
-start_link(Id, Path) ->
-  log:debug("ems_session:start_link/2 - Id: ~w, Path: ~s", [Id, Path]),
-  State = #state{id = Id, path = Path},
-  {ok, gen_server:start_link(?MODULE, State, [])}.
+start_link(_User, Path, Description) -> 
+  log:debug("session:new/3 - Creating session for ~s", [Path]),
+  State = #state{path = Path, description = Description},
+  gen_server:start_link(?MODULE, State, []).
 
 %% ----------------------------------------------------------------------------
 %% @doc Collects the streams inside the session and returns them to the caller, 
@@ -61,17 +55,17 @@ start_link(Id, Path) ->
 %% ----------------------------------------------------------------------------
 
 %% a collected channel and its address (i.e. path)
--type named_channel() :: {string(), any()}.
--spec collect_channels(Session :: session(), Path :: string()) -> 
-  [named_channel()].
-collect_channels(Session, Root) ->
-  Channels = gen_server:call(Session, collect_chddannels),
+-type named_channel() :: {string(), ems:channel()}.
+-spec get_channels(Session :: session()) -> [named_channel()].
+
+get_channels(Session) ->
+  {Root, Channels} = gen_server:call(Session, get_channels),
   F = fun(Ch) -> 
-        Path = ems_channel:path(Ch),
-        Addr = url:join_path(Root, Path),
+        Path = ems_channel:get_path(Ch),
+        Addr = url:join(Root, Path),
         {Addr, Ch}
       end,
-  plists:parallel_map(F, Channels).
+  lists:map(F, Channels).
 
 %% ----------------------------------------------------------------------------
 %%
@@ -85,7 +79,7 @@ stop(SessionPid) ->
 %% ----------------------------------------------------------------------------
 -spec for_each_channel(session(), fun((term()) -> any())) -> any().
 for_each_channel(Session, F) ->
-  Channels = gen_server:call(Session, get_channels),
+  {_, Channels} = gen_server:call(Session, get_channels),
   lists:foreach(Channels, F).
 
 %% ============================================================================
@@ -153,9 +147,10 @@ handle_call(activate, _From, State = #state{channels = Channels}) ->
   plists:parallel_map(fun ems_channel:activate/1, Channels),
   {reply, ok, State};
   
-handle_call({collect_channels, Root}, _From, State) -> 
-  {reply, State#state.channels, State};
-        
+handle_call(get_channels, _From, State = #state{channels = Channels, 
+                                                path = Root}) ->
+  {reply, {Root, Channels}, State};
+
 handle_call(_Request, _From, State) -> {noreply, State}.
 
 handle_cast(_Request, State) -> {noreply, State}.
