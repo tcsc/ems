@@ -6,3 +6,4 @@ syntax: glob
 doc/*
 deps/*
 .DS_Store
+.eunit
