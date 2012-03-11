@@ -59,11 +59,10 @@ start_link(_User, Path, Description) ->
 -spec get_channels(Session :: session()) -> [named_channel()].
 
 get_channels(Session) ->
-  {Root, Channels} = gen_server:call(Session, get_channels),
+  Channels = gen_server:call(Session, get_channels),
   F = fun(Ch) -> 
         Path = ems_channel:get_path(Ch),
-        Addr = url:join(Root, Path),
-        {Addr, Ch}
+        {Path, Ch}
       end,
   lists:map(F, Channels).
 
@@ -94,7 +93,7 @@ for_each_channel(Session, F) ->
 -spec init(Description :: sdp:session_description()) -> 
   {ok, State :: state()} | invalid_session.
 
-init(State = #state{description = Desc}) ->
+init(State = #state{path = Root, description = Desc}) ->
   
   % define a lambda that we will use to map over the streams in the session 
   % description to create channels for us
@@ -111,11 +110,13 @@ init(State = #state{description = Desc}) ->
           end,
       RtpFormats = lists:map(F, Stream#stream.formats),
 
+      Path = url:join(Root, Stream#stream.control_uri),
+
       % Start the channel for this stream. Linking to the channel means that
       % if one of the subsequent channel creations fails then the already-
       % created channels will automatically be killed when the session goes 
       % down...
-      case ems_channel:start_link(Stream, RtpFormats, self()) of
+      case ems_channel:start_link(Path, Stream, RtpFormats, self()) of
         {ok, Chan} -> Chan;
         {error, _} -> throw({channel_failed, Stream}) 
       end
@@ -147,9 +148,8 @@ handle_call(activate, _From, State = #state{channels = Channels}) ->
   plists:parallel_map(fun ems_channel:activate/1, Channels),
   {reply, ok, State};
   
-handle_call(get_channels, _From, State = #state{channels = Channels, 
-                                                path = Root}) ->
-  {reply, {Root, Channels}, State};
+handle_call(get_channels, _From, State = #state{channels = Channels}) ->
+  {reply, Channels, State};
 
 handle_call(_Request, _From, State) -> {noreply, State}.
 

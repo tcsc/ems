@@ -13,7 +13,7 @@
 	]).
 	
 % public API exports ----------------------------------------------------------
--export ([start_link/3,
+-export ([start_link/4,
           get_path/1,
           configure_input/3, 
           activate/1, 
@@ -25,7 +25,7 @@
 -record (state, {parent :: ems:session(), 
                  stream :: sdp:stream(), 
                  rtp_map :: sdp:rtp_map(),
-                 uri :: string(),
+                 path :: string(),
                  receiver :: term()}).
 
 -type state() :: #state{}.
@@ -38,18 +38,23 @@
 %% @doc Creates and starts a new media distribution channel
 %% @end
 %% ----------------------------------------------------------------------------
--spec start_link(Stream :: sdp:media_stream(),
+-spec start_link(Path   :: string(),
+                 Stream :: sdp:media_stream(),
                  RtpMap :: [sdp:rtp_map()],
                  Parent :: ems:session()) ->
         {ok, pid(), term()} | error.
 
-start_link(Stream, RtpMap, Parent) ->
+start_link(Path, Stream, RtpMap, Parent) ->
 	log:debug("ems_channel:start_link/3 - creating channel"),
-	State = #state{parent = Parent, stream = Stream, rtp_map = RtpMap},
+	State = #state{parent = Parent, 
+                 path = Path, 
+                 stream = Stream, 
+                 rtp_map = RtpMap},
+
 	case gen_server:start_link(?MODULE, State, []) of
 		{ok, Pid} -> {ok, Pid};
 		Error -> 
-			log:err("ems_channel:start_link/2 failed to start: ~w", [Error]),
+			log:err("ems_channel:start_link/4 failed to start: ~w", [Error]),
 			Error
 	end.
 
@@ -94,9 +99,9 @@ get_path(Channel) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-init(Args = #state{uri = Uri}) ->
-  log:debug("ems_channel:init/1 - starting channel for ~s", [Uri]),
-  {ok, Args}.
+init(State = #state{path = Path}) ->
+  log:debug("ems_channel:init/1 - starting channel for \"~s\"", [Path]),
+  {ok, State}.
 
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen_server in response to a call message. Does nothing at 
@@ -126,9 +131,7 @@ handle_call({configure, TransportSpec, ClientAddress}, _From, State) ->
 handle_call(activate, _From, State) ->
   {reply, ok, State};
 
-handle_call(get_path, _From, State) ->
-  Stream = State#state.stream,
-  Path = Stream#stream.control_uri,
+handle_call(get_path, _From, State = #state{path = Path}) ->
   {reply, {ok, Path}, State};
 
 handle_call(_Request, _From, State) ->

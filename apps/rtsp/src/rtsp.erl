@@ -23,7 +23,8 @@
   message_content_type/1,
   send_response/5,
   translate_status/1,
-  with_authenticated_user_do/4]).
+  with_authenticated_user_do/4,
+  with_optionally_authenticated_user_do/4]).
 
 %% ============================================================================
 %%
@@ -63,7 +64,8 @@
                                  
 -type user_info_callback() :: fun((Username :: string()) -> 
                                     false | {ok, user_info()}).
--type authenticated_action() :: fun((UserInfo :: user_info()) -> any()).
+
+-type authenticated_action() :: fun((UserInfo :: user_info() | anonymous) -> any()).
 -export_type([user_info_callback/0, authenticated_action/0]).
 
 %% ============================================================================
@@ -107,7 +109,25 @@ add_listener(Address, Port, Callback) ->
                                  'ok' | no_return().
 with_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
   rtsp_connection:with_authenticated_user_do(Conn, Rq, PwdCb, Action).
-  
+
+%% ----------------------------------------------------------------------------
+%% @doc Attempts to authenticate a request and executes a supplied an action 
+%%      on the resulting user if the athentication succeeds. If no 
+%%      authentication info is present, the action is still executed, but the 
+%%      atom 'anonymous' is passed in place of the user info record. This
+%%      function will still throw 'unauthorized' if authentication info is
+%%      present, but the auhentication check fails.
+%% @throws bad_request | unauthorized | stale
+%% @end
+%% ----------------------------------------------------------------------------
+-spec with_optionally_authenticated_user_do(Conn   :: conn(),
+                                            Rq     :: message(),
+                                            PwdCb  :: user_info_callback(),
+                                            Action :: authenticated_action()) ->
+                                            'ok' | no_return().
+with_optionally_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
+  rtsp_connection:with_optionally_authenticated_user_do(Conn, Rq, PwdCb, Action).
+
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary as an RTSP message. 
 %% @end
@@ -133,8 +153,9 @@ parse_message(Data) when is_binary(Data) ->
 %% @doc
 %% @end 
 %% -----------------------------------------------------------------------------
--spec get_message_header(message(), string()) -> [string()] | 'undefined'.
-get_message_header(Msg, Name) when is_record(Msg, rtsp_message) ->
+-spec get_message_header(Name :: string(),
+                         Msg :: message()) -> [string()] | 'undefined'.
+get_message_header(Name, Msg) when is_record(Msg, rtsp_message) ->
   get_header(Msg#rtsp_message.headers, Name).
   
 %% -----------------------------------------------------------------------------

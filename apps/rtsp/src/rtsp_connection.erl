@@ -6,8 +6,13 @@
 %% ============================================================================
 %% Public API
 %% ============================================================================
--export([new/3, close/1, take_socket/2, get_client_address/1, send_response/5, 
-        with_authenticated_user_do/4]).
+-export([new/3, 
+         close/1, 
+         take_socket/2, 
+         get_client_address/1, 
+         send_response/5, 
+         with_authenticated_user_do/4,
+         with_optionally_authenticated_user_do/4]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -465,9 +470,61 @@ deregister_pending_request(Seq, State) ->
   end.
 
 %% ----------------------------------------------------------------------------
+%% @doc Attempts to authenticate a request and executes a supplied action if 
+%%      the authentication succeeds. If no authentication info is present, the 
+%%      OnNoAuth action is executed instead. If authenticaton info is present, 
+%%      however, it must be correct.
+%% @throws bad_request | {unauthorized, auth_failed} | {unauthorized, stale}
+%% @private
+%% @end
+%% ----------------------------------------------------------------------------
+-spec authenticate_and_do(Conn     :: rtsp:conn(),
+                          Rq       :: rtsp:message(),
+                          PwdCb    :: rtsp:user_info_callback(),
+                          Action   :: rtsp:authenticated_action(),
+                          OnNoAuth :: fun(()->any())) -> 
+                            ok | no_return().
+  
+authenticate_and_do(Conn, Rq, PwdCb, Action, OnNoAuth) ->
+  case rtsp:get_message_header(?RTSP_HEADER_AUTHORISATION, Rq) of
+    undefined -> OnNoAuth();
+    [AuthHeader|_] ->
+      AuthInfo = case rtsp_authentication:parse(AuthHeader) of
+                   {ok, I} -> I;
+                   _ -> throw(bad_request)
+                 end,
+      UserName = rtsp_authentication:get_user_name(AuthInfo),
+      log:debug("rtsp_connection - authenticating user \"~s\"", [UserName]),
+      
+      % ask whoever called us what the password for this user is
+      case PwdCb(UserName) of 
+        false -> 
+          log:debug("rtsp_connection - no such user \"~s\"", [UserName]),
+          throw({unauthorised, no_such_user});
+
+        {ok, UserInfo} ->
+          case rtsp_authentication:validate(Conn, Rq, AuthInfo, UserInfo) of
+            ok ->
+              log:debug("rtsp_connection - authenticated user \"~s\"", [UserName]),
+              Action(UserInfo),
+              ok;
+
+            fail ->
+              throw({unauthorized, auth_failed});
+
+            stale ->
+              throw({unauthorized, stale})
+          end
+      end
+  end.
+
+%% ----------------------------------------------------------------------------
 %% @doc Attempts to authenticate a request and executes an action if and only
 %%      if the athentication succeeds.
-%% @throws bad_request | unauthorized | stale
+%% @throws bad_request |
+%%         {unauthorized, missing_header} | 
+%%         {unauthorized, auth_failed} | 
+%%         {unauthorized, stale} 
 %% @end
 %% ----------------------------------------------------------------------------
 -spec with_authenticated_user_do(rtsp:conn(),
@@ -476,35 +533,30 @@ deregister_pending_request(Seq, State) ->
                                  rtsp:authenticated_action()) -> 
                                  'ok' | no_return().
 with_authenticated_user_do(Conn, Request, PwdCallback, Action) ->
-  case rtsp:get_message_header(Request, ?RTSP_HEADER_AUTHORISATION) of
-    undefined -> throw({unauthorized, missing_header});  
+  OnNoHeader = fun() ->
+                 throw({unauthorized, missing_header})
+               end,
+  authenticate_and_do(Conn, Request, PwdCallback, Action, OnNoHeader).
 
-    [AuthHeader|_] -> 
-      AuthInfo = case rtsp_authentication:parse(AuthHeader) of
-                   {ok, I} -> I;
-                   _ -> throw(bad_request)
-                 end,
-      UserName = rtsp_authentication:get_user_name(AuthInfo),
-      
-      log:debug("rtsp_connection:with_authenticated_user_do/4 - authenticating \"~s\"", 
-        [UserName]),
-      case PwdCallback(UserName) of
-        false ->
-          log:debug("rtsp_connection:with_authenticated_user_do/4 - no such user \"~s\"", [UserName]), 
-          throw({unauthorized, no_such_user});
-          
-        {ok, UserInfo} -> 
-          case rtsp_authentication:validate(Conn, Request, AuthInfo, UserInfo) of
-            ok ->
-              log:debug("rtsp_connection:with_authenticated_user_do/4 - authenticated", []),
-              Action(UserInfo), 
-              ok;
-              
-            fail -> throw({unauthorized, auth_failed});
-            stale -> throw({unauthorized, stale})
-          end
-      end
-  end.
+%% ----------------------------------------------------------------------------
+%% @doc Attempts to authenticate a request and executes a supplied an action 
+%%      on the resulting user if the athentication succeeds. If no 
+%%      authentication info is present, the action is still executed, but the 
+%%      atom 'anonymous' is passed in place of the user info record. This
+%%      function will still throw 'unauthorized' if authentication info is
+%%      present, but the auhentication check fails.
+%% @throws bad_request | unauthorized | stale
+%% @end
+%% ----------------------------------------------------------------------------
+-spec with_optionally_authenticated_user_do(Conn   :: rtsp:conn(),
+                                            Rq     :: rtsp:message(),
+                                            PwdCb  :: rtsp:user_info_callback(),
+                                            Action :: rtsp:authenticated_action())
+                                            ->
+                                            'ok' | no_return().
+with_optionally_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
+  OnNoHeader = fun() -> Action(anonymous) end,
+  authenticate_and_do(Conn, Rq, PwdCb, Action, OnNoHeader).
 
 %% ============================================================================
 %% RTSP Sender implementation

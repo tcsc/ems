@@ -44,6 +44,8 @@ handle_request(Config, Conn, Msg) ->
                      Uri    :: string(),
                      Msg    :: rtsp:message()) -> any().
 
+% Trivially handles the stndard "OPTIONS" method that queries the server for 
+% the operations it supports.
 handle_request(_, Conn, Seq, "OPTIONS", _, _) ->
   PublicOptions = [?RTSP_METHOD_ANNOUNCE,
                    ?RTSP_METHOD_DESCRIBE,
@@ -55,6 +57,9 @@ handle_request(_, Conn, Seq, "OPTIONS", _, _) ->
   Headers = [{"Public", string:join(PublicOptions, ", ")}],
   rtsp:send_response(Conn, Seq, ok, Headers, << >>);
 
+% Handles a request to create a new session using the standard "ANNOUNCE"
+% method. This *always* requires authentication so the authentication logic is
+% a little more straightforward than most handlers
 handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
   LookupUser = fun(UserName) -> get_user_info(Config, UserName) end,  
   Handler = 
@@ -72,7 +77,21 @@ handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
       rtsp:send_response(Conn, Seq, Response, [], << >>)
     end,
   rtsp:with_authenticated_user_do(Conn, Msg, LookupUser, Handler);
-  
+
+% Handles a request to setup a channel, either inbound or outbound. This
+% function has to determine the direction of the request and then translate
+% the request into something sensible for the ems_server to do.
+%handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
+%  {_, _, _, Path} = uri:parse(Uri),
+%  TransportSpec = 
+%    case rtsp:get_message_header("Transport", Msg) of
+%      [TransportHeader] -> rtsp:parse_transport(TransportHeader);
+%      _ -> throw(bad_request)
+%    end,
+%  rtsp:with_optionally_authenticated_user_do(Conn, Msg, LookupUser, Handler);  
+
+% Default request handler - issues a "NOT IMPLEMENTED" response to anything 
+% not explicitly handled above
 handle_request(_, Conn, Seq, _, _, _) ->
   rtsp:send_response(Conn, Seq, not_implemented, [], << >>).
 
