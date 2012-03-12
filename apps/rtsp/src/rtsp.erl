@@ -23,8 +23,7 @@
   message_content_type/1,
   send_response/5,
   translate_status/1,
-  with_authenticated_user_do/4,
-  with_optionally_authenticated_user_do/4]).
+  with_authenticated_user_do/4]).
 
 %% ============================================================================
 %%
@@ -97,36 +96,25 @@ add_listener(Address, Port, Callback) ->
 
 
 %% ----------------------------------------------------------------------------
-%% @doc Attempts to authenticate a request and executes an action if and only
-%%      if the athentication succeeds.
-%% @throws bad_request | unauthorized | stale
+%% @doc Attempts to authenticate a request and executes athe supplied on the 
+%%      resulting user info record if the athentication succeeds.
+%%
+%%      If no authentication info is present, the action is still executed, 
+%%      but the atom 'anonymous' is passed in place of the user info record. 
+%%
+%%      If authentication info is present but invalid, the function will
+%%      throw 'bad_request' or 'unauthorized', depending in the reason the
+%%      authentication fails.
+%% @throws bad_request | {unauthorized, stale}
 %% @end
 %% ----------------------------------------------------------------------------
--spec with_authenticated_user_do(conn(),
-                                 message(),
-                                 user_info_callback(),
-                                 authenticated_action()) -> 
-                                 'ok' | no_return().
+-spec with_authenticated_user_do(Conn   :: conn(),
+                                 Rq     :: message(),
+                                 PwdCb  :: user_info_callback(),
+                                 Action :: authenticated_action()) ->
+                                    'ok' | no_return().
 with_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
   rtsp_connection:with_authenticated_user_do(Conn, Rq, PwdCb, Action).
-
-%% ----------------------------------------------------------------------------
-%% @doc Attempts to authenticate a request and executes a supplied an action 
-%%      on the resulting user if the athentication succeeds. If no 
-%%      authentication info is present, the action is still executed, but the 
-%%      atom 'anonymous' is passed in place of the user info record. This
-%%      function will still throw 'unauthorized' if authentication info is
-%%      present, but the auhentication check fails.
-%% @throws bad_request | unauthorized | stale
-%% @end
-%% ----------------------------------------------------------------------------
--spec with_optionally_authenticated_user_do(Conn   :: conn(),
-                                            Rq     :: message(),
-                                            PwdCb  :: user_info_callback(),
-                                            Action :: authenticated_action()) ->
-                                            'ok' | no_return().
-with_optionally_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
-  rtsp_connection:with_optionally_authenticated_user_do(Conn, Rq, PwdCb, Action).
 
 %% ----------------------------------------------------------------------------
 %% @doc Parses a binary as an RTSP message. 

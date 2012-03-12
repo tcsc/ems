@@ -77,6 +77,11 @@ stop(_State) ->
                                              'not_authorised' | 
                                              'already_exists'.
 
+% creating a session always requires a logged-in user, so if we don't have 
+% one then we need to bail right now.
+create_session(_, _, anonymous, _, _) -> 
+  not_authorized;
+
 create_session(Config, Path, User, Desc, _Options) -> 
   case ems_config:get_mount_point(Config, Path) of 
     {ok, MountPoint} ->
@@ -98,19 +103,6 @@ create_session(Config, Path, User, Desc, _Options) ->
       log:debug("ems_server: no such mount point", []),
       not_found
   end.
-  
-%   Session = ems_session:new(Path, Desc),
-%    case ems_session_manager:register_session(Path, Session, UserInfo) of
-%      ok ->
-%        {ok, Session};
-%        
-%      {error, Reason} -> 
-%        ems_session:destroy(Session),
-%        {error, Reason}
-%    end;
-%  false -> not_authorised
-
-
   
 %% ============================================================================
 %% gen_server callbacks

@@ -61,17 +61,17 @@ handle_request(_, Conn, Seq, "OPTIONS", _, _) ->
 % method. This *always* requires authentication so the authentication logic is
 % a little more straightforward than most handlers
 handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
+  {_, _, _, Path} = url:parse(Uri),
   LookupUser = fun(UserName) -> get_user_info(Config, UserName) end,  
   Handler = 
     fun(Uid) ->
       UserInfo = translate_user(Uid),
       Desc = parse_sdp(Msg),
-      {_, _, _, Path} = url:parse(Uri),
       Response = 
         case ems_server:create_session(Config, Path, UserInfo, Desc, []) of
           {ok, _} -> ok;
           already_exists -> method_not_valid;
-          not_authorised -> throw(unathorized);
+          not_authorized -> throw({unauthorized, auth_required});
           not_found -> not_found
         end,
       rtsp:send_response(Conn, Seq, Response, [], << >>)
@@ -81,14 +81,48 @@ handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
 % Handles a request to setup a channel, either inbound or outbound. This
 % function has to determine the direction of the request and then translate
 % the request into something sensible for the ems_server to do.
-%handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
-%  {_, _, _, Path} = uri:parse(Uri),
-%  TransportSpec = 
-%    case rtsp:get_message_header("Transport", Msg) of
-%      [TransportHeader] -> rtsp:parse_transport(TransportHeader);
-%      _ -> throw(bad_request)
-%    end,
-%  rtsp:with_optionally_authenticated_user_do(Conn, Msg, LookupUser, Handler);  
+handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
+  {_, _, _, Path} = uri:parse(Uri),
+  TransportSpec = 
+    case rtsp:get_message_header("Transport", Msg) of
+      [TransportHeader] -> rtsp:parse_transport(TransportHeader);
+      _ -> throw(bad_request)
+    end,
+
+  SessionId = rtsp:get_session_id(Msg),
+
+  LookupUser = fun(UserName) -> get_user_info(Config, UserName) end,  
+  
+  Handler =
+    fun(Uid) ->
+      User = translate_user(Uid),
+      Result = 
+        case rtsp:transport_direction(TransportSpec) of 
+          inbound -> 
+            ems_server:configure_channel(User, Path, SessionId, TransportSpec);
+          
+          outbound ->
+            ems_server:subscribe_channel(User, Path, SessionId, TransportSpec)
+        end,
+
+      {Response, ResponseHeaders} = 
+        case Result of
+          {ok, SvrTransport, SessionId} -> 
+            FormattedTransport = rtsp:format_transport(SvrTransport),
+            RspHdrs = [{?RTSP_HEADER_SESSION, SessionId}, 
+                       {?RTSP_HEADER_TRANSPORT, FormattedTransport}],
+            {ok, RspHdrs};
+
+          not_authorized -> 
+            throw(unauthorized);
+        
+          not_found -> {not_found, []};
+          bad_request -> {bad_request, []}
+        end,
+      rtsp:send_response(Conn, Seq, Response, ResponseHeaders, << >>)
+    end,
+
+  rtsp:with_authenticated_user_do(Conn, Msg, LookupUser, Handler);  
 
 % Default request handler - issues a "NOT IMPLEMENTED" response to anything 
 % not explicitly handled above
@@ -124,14 +158,20 @@ get_user_info(Config, UserName) ->
 %%      the RTSP service uses.
 %% @end
 %% -----------------------------------------------------------------------------  
--spec translate_user(User :: #user_info{} | #rtsp_user_info{}) -> 
-  #user_info{} | #rtsp_user_info{}.
+-spec translate_user(User :: anonymous | #user_info{} | #rtsp_user_info{}) -> 
+  anonymous | #user_info{} | #rtsp_user_info{}.
 
-translate_user(User = #user_info{id = Id, login = LoginName, password = Pwd}) 
+translate_user(anonymous) -> anonymous;
+
+translate_user(User = #user_info{id = Id, 
+                                 login = LoginName, 
+                                 password = Pwd}) 
     when is_record(User, user_info) ->
   #rtsp_user_info{id = Id, username = LoginName, password = Pwd};
   
-translate_user(User = #rtsp_user_info{id = Id, username = LoginName, password = Pwd}) 
+translate_user(User = #rtsp_user_info{id = Id,
+                                      username = LoginName, 
+                                      password = Pwd}) 
     when is_record(User, rtsp_user_info) ->
   #user_info{id = Id, login = LoginName, password = Pwd}.
   

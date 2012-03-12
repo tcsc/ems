@@ -11,8 +11,7 @@
          take_socket/2, 
          get_client_address/1, 
          send_response/5, 
-         with_authenticated_user_do/4,
-         with_optionally_authenticated_user_do/4]).
+         with_authenticated_user_do/4]).
 
 %% ============================================================================
 %% gen_fsm exports
@@ -470,24 +469,34 @@ deregister_pending_request(Seq, State) ->
   end.
 
 %% ----------------------------------------------------------------------------
-%% @doc Attempts to authenticate a request and executes a supplied action if 
-%%      the authentication succeeds. If no authentication info is present, the 
-%%      OnNoAuth action is executed instead. If authenticaton info is present, 
-%%      however, it must be correct.
-%% @throws bad_request | {unauthorized, auth_failed} | {unauthorized, stale}
-%% @private
+%% @doc Attempts to authenticate a request and executes an action if the 
+%%      authentication succeeds.
+%%
+%%      If no authenitcation header is present in the request, the action will
+%%      still be executed on the atom 'anonymous', rather than a user info 
+%%      record.
+%%      
+%% @throws bad_request |
+%%         {unauthorized, missing_header} | 
+%%         {unauthorized, auth_failed} | 
+%%         {unauthorized, stale} 
 %% @end
 %% ----------------------------------------------------------------------------
--spec authenticate_and_do(Conn     :: rtsp:conn(),
-                          Rq       :: rtsp:message(),
-                          PwdCb    :: rtsp:user_info_callback(),
-                          Action   :: rtsp:authenticated_action(),
-                          OnNoAuth :: fun(()->any())) -> 
-                            ok | no_return().
-  
-authenticate_and_do(Conn, Rq, PwdCb, Action, OnNoAuth) ->
+-spec with_authenticated_user_do(rtsp:conn(),
+                                 rtsp:message(),
+                                 rtsp:user_info_callback(),
+                                 rtsp:authenticated_action()) -> 
+                                 'ok' | no_return().
+with_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
   case rtsp:get_message_header(?RTSP_HEADER_AUTHORISATION, Rq) of
-    undefined -> OnNoAuth();
+
+    % There's no authentication header. Execute the action on the "anonymous"
+    % user
+    undefined ->
+      Action(anonymous);
+
+    % there *is* an authentication header - use it to try and authenticate the 
+    % user 
     [AuthHeader|_] ->
       AuthInfo = case rtsp_authentication:parse(AuthHeader) of
                    {ok, I} -> I;
@@ -517,46 +526,6 @@ authenticate_and_do(Conn, Rq, PwdCb, Action, OnNoAuth) ->
           end
       end
   end.
-
-%% ----------------------------------------------------------------------------
-%% @doc Attempts to authenticate a request and executes an action if and only
-%%      if the athentication succeeds.
-%% @throws bad_request |
-%%         {unauthorized, missing_header} | 
-%%         {unauthorized, auth_failed} | 
-%%         {unauthorized, stale} 
-%% @end
-%% ----------------------------------------------------------------------------
--spec with_authenticated_user_do(rtsp:conn(),
-                                 rtsp:message(),
-                                 rtsp:user_info_callback(),
-                                 rtsp:authenticated_action()) -> 
-                                 'ok' | no_return().
-with_authenticated_user_do(Conn, Request, PwdCallback, Action) ->
-  OnNoHeader = fun() ->
-                 throw({unauthorized, missing_header})
-               end,
-  authenticate_and_do(Conn, Request, PwdCallback, Action, OnNoHeader).
-
-%% ----------------------------------------------------------------------------
-%% @doc Attempts to authenticate a request and executes a supplied an action 
-%%      on the resulting user if the athentication succeeds. If no 
-%%      authentication info is present, the action is still executed, but the 
-%%      atom 'anonymous' is passed in place of the user info record. This
-%%      function will still throw 'unauthorized' if authentication info is
-%%      present, but the auhentication check fails.
-%% @throws bad_request | unauthorized | stale
-%% @end
-%% ----------------------------------------------------------------------------
--spec with_optionally_authenticated_user_do(Conn   :: rtsp:conn(),
-                                            Rq     :: rtsp:message(),
-                                            PwdCb  :: rtsp:user_info_callback(),
-                                            Action :: rtsp:authenticated_action())
-                                            ->
-                                            'ok' | no_return().
-with_optionally_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
-  OnNoHeader = fun() -> Action(anonymous) end,
-  authenticate_and_do(Conn, Rq, PwdCb, Action, OnNoHeader).
 
 %% ============================================================================
 %% RTSP Sender implementation
