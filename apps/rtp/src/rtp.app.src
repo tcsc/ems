@@ -1,0 +1,9 @@
+{application, rtp,
+ [
+  {description, "An Erlang RTP implementation"},
+  {vsn, "0.1"},
+  {modules, []},
+  {applications, [kernel, stdlib, utils]},
+  {registered, []},
+  {env, []}
+ ]}.

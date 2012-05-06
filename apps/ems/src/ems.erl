@@ -9,7 +9,13 @@
 -type config() :: any().
 -type user_info() :: #user_info{}.
 -type mount_point() :: #mount_point{}.
--export_type([config/0, user_rights/0, user_info/0, mount_point/0]).
+-type transport_spec() :: rtsp:transport_spec().
+
+-export_type([config/0, 
+              user_rights/0,
+              user_info/0,
+              mount_point/0,
+              transport_spec/0]).
 
 %% ============================================================================
 %% External Functions

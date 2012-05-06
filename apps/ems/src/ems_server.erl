@@ -15,7 +15,11 @@
 %% ============================================================================
 %% Exported Functions
 %% ============================================================================
--export([start_link/1, stop/1, create_session/5]).
+-export([start_link/1, 
+         stop/1, 
+         create_session/5, 
+         with_channel_do/2, 
+         with_broadcast_rights_on_channel_do/4]).
 
 %% ============================================================================
 %% Records, macros, etc
@@ -80,7 +84,7 @@ stop(_State) ->
 % creating a session always requires a logged-in user, so if we don't have 
 % one then we need to bail right now.
 create_session(_, _, anonymous, _, _) -> 
-  not_authorized;
+  not_authorised;
 
 create_session(Config, Path, User, Desc, _Options) -> 
   case ems_config:get_mount_point(Config, Path) of 
@@ -103,7 +107,63 @@ create_session(Config, Path, User, Desc, _Options) ->
       log:debug("ems_server: no such mount point", []),
       not_found
   end.
-  
+
+%% ----------------------------------------------------------------------------
+%% @doc Configures an inbound channel. The user must have broadcast rights on 
+%%      the channel, and anonymous users are not allowed.
+%% @doc 
+%% ----------------------------------------------------------------------------
+-spec configure_channel( User :: ems:user_info(),
+                         Path :: string(),
+                         SessionId :: string(),
+                         TransportSpec :: ems:transport_spec() ) -> 
+                            {error, unauthorized | atom() } | 
+                            {ok, ems:transport_spec()}.
+
+configure_channel(anonymous, _, _, _) -> unauthorized;
+configure_channel(User, Path, SessionId, TransportSpec) ->
+  F = fun(Channel) ->
+        
+      end,
+  with_broadcast_rights_on_channel_do(Config, Path, User, F).
+
+%% ----------------------------------------------------------------------------
+%% @doc Looks up a channel, checks to see if the user has broadcast rights on 
+%%      the enclosing session and executes a channel action callback if the 
+%%      channel exists and the user has the appropriate rights.
+%% @end
+%% ----------------------------------------------------------------------------
+-type channel_action() :: fun((Channel :: ems:channel()) -> ok | no_return()).
+-spec with_broadcast_rights_on_channel_do(
+        Config :: config:handle(),
+        Path :: string(),
+        User :: ems:user_info(),
+        Action :: channel_action()) -> ok | not_found | unauthorised.
+
+with_broadcast_rights_on_channel_do(Config, Path, User, Action) ->
+  case ems_session_manager:lookup_object(Path) of
+    {channel, Channel} ->
+      Session = ems_channel:get_session(Channel),
+      SessionPath = ems_session:get_path(Session),
+      Rights = ems_config:get(Config, User, SessionPath),
+      case lists:member(broadcast, Rights) of
+        true -> Action(Channel);
+        false -> unauthorised 
+      end;
+
+    _ -> not_found
+  end.
+
+-spec with_channel_do(
+        Path :: string(), 
+        Action :: channel_action()) -> ok | not_found.
+
+with_channel_do(Path, Action) ->
+  case ems_session_manager:lookup_object(Path) of
+    {channel, Ch} -> Action(Ch);
+    _ -> not_found
+  end.
+
 %% ============================================================================
 %% gen_server callbacks
 %% ============================================================================
@@ -111,11 +171,6 @@ create_session(Config, Path, User, Desc, _Options) ->
 %% ----------------------------------------------------------------------------
 %% @doc Called back by the gen_server framework to do the real initialisation 
 %%      work.
-%% @spec init(State) -> {ok,State} | 
-%%                      {ok,State,Timeout} | 
-%%                      {ok,State,hibernate} |
-%%                      {stop, Reason} |
-%%                      ignore
 %% @end
 %% ----------------------------------------------------------------------------
 init(State) ->
@@ -125,7 +180,6 @@ init(State) ->
 %% ----------------------------------------------------------------------------
 %% @doc Called by the gen_server in response to a call message. Does nothing at 
 %%      this point.
-%% @spec handle_call(Request,From,State) -> {noreply, State}
 %% @end
 %% ----------------------------------------------------------------------------
 -spec handle_call(Request :: term(), From :: pid(), State :: state()) ->

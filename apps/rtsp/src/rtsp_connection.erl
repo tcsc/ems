@@ -7,7 +7,9 @@
 %% Public API
 %% ============================================================================
 -export([new/3, 
-         close/1, 
+         close/1,
+         create_channels/2,
+         channel_index/1,
          take_socket/2, 
          get_client_address/1, 
          send_response/5, 
@@ -36,18 +38,31 @@
 -export([handle_data/3]).
 -export([sender_loop/2]).
 
+
+%% ============================================================================
+%% Type definitions
+%% ============================================================================
+
+-type buffer_handler() :: fun((binary())->any()).
+-record(channel, {queue      :: [binary()],
+                  handler    :: buffer_handler()} ).
+-type channel_state() :: #channel{}.
+-type channel() :: {rtsp:conn(), integer()}.
+
 %% ----------------------------------------------------------------------------
 %% @doc The state record for an RTSP connection.
 %% @end
 %% ----------------------------------------------------------------------------
 
--record(state, { server_str        :: string(),
-                 socket            :: inet:socket(),
-                 sender            :: pid(),
-                 pending_message   :: rtsp:message(),
-                 pending_requests  :: dict(),
-                 pending_data      :: binary(),
-                 callback          :: rtsp:request_callback()
+-record(state, { server_str             :: string(),
+                 socket                 :: inet:socket(),
+                 sender                 :: pid(),
+                 pending_message        :: rtsp:message(),
+                 pending_requests       :: dict(),
+                 pending_data           :: binary(),
+                 callback               :: rtsp:request_callback(),
+                 channels = array:new() :: array(),
+                 handlers               :: [{integer(), fun(()->term())}]
                }).
 -type state() :: #state{}.
 
@@ -68,8 +83,7 @@ new(_Owner, ServerStr, Callback) ->
   State = #state{ server_str       = ServerStr,
                   pending_data     = << >>,
                   pending_requests = dict:new(),
-                  callback         = Callback
-                },
+                  callback         = Callback },
   gen_fsm:start_link(?MODULE, State, []).
 
 close(Conn) ->
@@ -86,6 +100,32 @@ take_socket(Conn, Socket) ->
 
 get_client_address(Conn) ->
   gen_fsm:sync_send_all_state_event(Conn, get_client_address).
+
+%% ----------------------------------------------------------------------------
+%% @doc Reserves a set of channels on the RTSP connection. The connection will
+%%      attempt to reserve all the channels requested, and will fail if one of 
+%%      them is not available.
+%%
+%%      The buffer handler callback will be invoked whenever a new buffer has 
+%%      arrived for the registered channel. Receiving a zero-length buffer
+%%      indicates that the connection is going (or has gone) down, and you 
+%%      should start whatever cleanup work is necessary. 
+%% @end 
+%% ----------------------------------------------------------------------------
+-spec create_channels(Conn :: rtsp:conn(), 
+                      Indices :: [{integer(), buffer_handler()}]) ->
+  {ok, [channel()]} | {error, term()}.
+  
+create_channels(Conn, Indices) ->
+  X = gen_fsm:sync_send_all_state_event(Conn, {create_channels, Indices}),
+  io:format("rval: ~w~n", [X]),
+  X.
+
+%% ----------------------------------------------------------------------------
+%% ----------------------------------------------------------------------------
+-spec channel_index(channel()) -> integer().
+channel_index({_,Index}) -> 
+  Index. 
 
 %% ============================================================================
 %% gen_fsm API
@@ -113,7 +153,7 @@ handle_event({send_response, Sequence, Status, ExtraHeaders, Body},
     {Msg, S} -> 
       Rq = Msg#rtsp_message.message,
       RtspVersion = Rq#rtsp_request.version,
-      AllHeaders = build_response_headers(Sequence, size(Body), ExtraHeaders),
+      AllHeaders = build_response_headers(Sequence, byte_size(Body), ExtraHeaders),
       Response = #rtsp_response{status = Status, version = RtspVersion}, 
       Bytes = rtsp:format_message(Response, AllHeaders, Body),
       send_data(S, Bytes),
@@ -183,7 +223,15 @@ handle_sync_event(get_client_address, _From, StateName, State) ->
   log:debug("rtsp_connection:handle_sync_event/4"),
   {ok, {Host, _}} = inet:sockname(State#state.socket),
   {reply, Host, StateName, State};
-  
+
+handle_sync_event({create_channels, Indices}, _From, StateName, State) ->
+  case register_channels(self(), Indices, State) of
+    {ok, NewState, NewChannels} ->
+      {reply, {ok, NewChannels}, StateName, NewState};
+    Err ->
+      {reply, Err, StateName, State}
+  end;  
+   
 handle_sync_event(quit, _, _, State) ->
   log:debug("rtsp_connection:handle_sync_event/4 - quit"),
   {stop, normal, ok, State};
@@ -258,11 +306,16 @@ ready(Event, State) ->
 %%
 %% @end
 %% ----------------------------------------------------------------------------
-handle_data(<<$$:8, _Channel:8, Size:16/big, Data/binary>>, StateData, ready) ->
-  if size(Data) >= Size -> 
+handle_data(<<$$:8, Channel:8, Size:16/big-unsigned-integer, Data/binary>>, 
+            StateData, ready) ->
+
+  if byte_size(Data) >= Size -> 
     % extract the packet from the data stream;
-    <<_Packet:Size/binary, Remainder/binary>> = Data,
+    <<Packet:Size/binary, Remainder/binary>> = Data,
     
+    % deliver the packet to whoever wants it
+    deliver_packet(StateData, Channel, Packet),
+
     % do what you have to with the packet data
     handle_data(Remainder, StateData, ready);
 
@@ -304,7 +357,7 @@ handle_data(Data, State, reading_body) ->
   ContentLength = rtsp:message_content_length(Msg),
   
   {Body, Remainder} = 
-    case size(Data) of 
+    case byte_size(Data) of 
       % if we have enough data in the buffer to satisfy the content length, then 
       % extact the body and return it with the remainder. 
       Len when Len =< ContentLength -> 
@@ -328,12 +381,32 @@ handle_data(Data, StateData, _State) ->
   log:trace("rtsp_connection:handle_data/3 - ~w ~w", [StateData,_State]),
   {ok, ready, StateData, Data}.
 
+
+%% ----------------------------------------------------------------------------
+%% @doc Delivers a packet to the registered callback   
+%% @end
+%% ----------------------------------------------------------------------------
+deliver_packet(#state{channels = Channels} = _State, ChannelIndex, Buffer) ->
+  case array:get(ChannelIndex, Channels) of
+    Channel when is_record(Channel, channel) -> 
+      io:format("Forwarding data on Channel ~w", [ChannelIndex]),
+      Handler = Channel#channel.handler,
+      Handler(Buffer);
+
+    undefined -> 
+      io:format("No channel on index"),
+      log:warning("Received packet on unregistered channel ~w", [ChannelIndex]);
+  
+    Err ->
+      io:format("Unexpected data: ~w", [Err])
+  end.
+
 %% ============================================================================
 %% Message handling routines 
 %% ============================================================================
 
 %% ----------------------------------------------------------------------------
-%% @doc
+%% @doc Dispatches an RTSP message for handling on a new process. 
 %% @end
 %% ---------------------------------------------------------------------------- 
 -spec dispatch_message(rtsp:message(), state()) -> state().
@@ -354,8 +427,8 @@ dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
           try 
             Callback(Me, Msg)
           catch
-            {unauthorized, stale} -> send_auth_response(Me, Seq, [stale]);
-            {unauthorized, _} -> send_auth_response(Me, Seq);
+            {unauthorised, stale} -> send_auth_response(Me, Seq, [stale]);
+            {unauthorised, _} -> send_auth_response(Me, Seq);
             bad_request  -> send_response(Me, Seq, bad_request, [], << >>);
             Err -> send_server_error(Me, Err, Seq)
           end 
@@ -387,7 +460,7 @@ send_server_error(Pid, Reason, Sequence) ->
   ok.
 
 %% ----------------------------------------------------------------------------
-%% @doc Generates and sends an RTSP 401-unauthorized response and sends it back
+%% @doc Generates and sends an RTSP 401-unauthorised response and sends it back
 %%      to the client.
 %% @end
 %% ----------------------------------------------------------------------------
@@ -395,7 +468,7 @@ send_auth_response(Conn, Seq) ->  send_auth_response(Conn, Seq, []).
 
 send_auth_response(Conn, Seq, Flags) ->
   Headers = rtsp_authentication:get_headers(Conn, "rtsp-server", Flags),
-  send_response(Conn, Seq, unauthorized, Headers, << >>).
+  send_response(Conn, Seq, unauthorised, Headers, << >>).
 
 %% ----------------------------------------------------------------------------
 %% @spec build_response_headers(Sequence, ContentLength, Headers) -> Result
@@ -469,6 +542,39 @@ deregister_pending_request(Seq, State) ->
   end.
 
 %% ----------------------------------------------------------------------------
+%% @doc Recursively registers a new channel on the connection, failing if 
+%%      the requested channel is already in use. 
+%% @end
+%% ----------------------------------------------------------------------------
+register_channels(Conn, Channels, State) -> 
+  register_channels(Conn, Channels, State, []).
+
+register_channels(_Conn, [], State, NewChannels) -> 
+  {ok, State, lists:reverse(NewChannels)};
+
+register_channels(Conn, [Channel|Rest], State, NewChannels) ->
+  {Index, Callback} = Channel,
+  Channels = State#state.channels,
+  case Index of 
+    n when n > 255 -> {error, "Invalid channel index"};
+    _ -> 
+      case array:get(Index, Channels) of
+        % Undefined means that the channel is free. Who-hoo, we can use it.
+        undefined -> 
+          NewChannel = #channel{queue = [], handler = Callback},
+          Handle = {Conn, Index},
+          NewState = State#state{channels = 
+                                   array:set(Index, NewChannel, Channels)},
+          register_channels(Conn, Rest, NewState, [Handle | NewChannels]);
+
+        % anythng apart from "undefined" means the channel is in use. This is an 
+        % error
+        _ -> 
+          {error, "Channel index in use"}
+      end
+  end.
+
+%% ----------------------------------------------------------------------------
 %% @doc Attempts to authenticate a request and executes an action if the 
 %%      authentication succeeds.
 %%
@@ -477,9 +583,9 @@ deregister_pending_request(Seq, State) ->
 %%      record.
 %%      
 %% @throws bad_request |
-%%         {unauthorized, missing_header} | 
-%%         {unauthorized, auth_failed} | 
-%%         {unauthorized, stale} 
+%%         {unauthorised, missing_header} | 
+%%         {unauthorised, auth_failed} | 
+%%         {unauthorised, stale} 
 %% @end
 %% ----------------------------------------------------------------------------
 -spec with_authenticated_user_do(rtsp:conn(),
@@ -519,10 +625,10 @@ with_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
               ok;
 
             fail ->
-              throw({unauthorized, auth_failed});
+              throw({unauthorised, auth_failed});
 
             stale ->
-              throw({unauthorized, stale})
+              throw({unauthorised, stale})
           end
       end
   end.

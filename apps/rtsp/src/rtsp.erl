@@ -16,6 +16,7 @@
   parse_transport/1,
   get_header/2,
   get_message_header/2,
+  get_session_id/1,
   get_request_info/1,
   is_request/1,
   is_response/1,
@@ -58,14 +59,39 @@
 %% function to forward requests to someone to handle them.
 -type request_callback() :: fun((conn(), message()) -> any()).
 
--export_type([message/0, conn/0, svr/0, request/0, header/0, request_callback/0, user_info/0]).
+-type transport_spec() :: [transport_element()].
+-type transport_element() :: multicast
+                           | unicast 
+                           | {direction, inbound | outbound}
+                           | {destination, inet:ip_address()}
+                           | {ttl, integer()}
+                           | {interleaved, [integer()]}
+                           | {client_port, [integer()]}
+                           | {server_port, [integer()]}
+                           | {port, [integer()]}
+                           | {layers, string()}
+                           | {ssrc, string()}
+                           | {source, string()}
+                           | append. 
+
+-export_type([message/0, 
+              conn/0, 
+              svr/0, 
+              request/0, 
+              header/0, 
+              request_callback/0, 
+              user_info/0,
+              transport_spec/0,
+              transport_element/0]).
 -opaque_type([conn/0, svr/0]).
                                  
 -type user_info_callback() :: fun((Username :: string()) -> 
                                     false | {ok, user_info()}).
 
--type authenticated_action() :: fun((UserInfo :: user_info() | anonymous) -> any()).
+-type authenticated_action() :: 
+  fun((UserInfo :: user_info() | anonymous) -> any()).
 -export_type([user_info_callback/0, authenticated_action/0]).
+
 
 %% ============================================================================
 %% Definitions
@@ -76,6 +102,12 @@
 %% ============================================================================
 %% Application callbacks
 %% ============================================================================
+
+%% ----------------------------------------------------------------------------
+%% @doc Starts the RTSP service, making sure any dependent applications are 
+%%      already started.
+%% @end.
+%% ----------------------------------------------------------------------------
 start() ->
   log:info("rtsp:start/1 - Starting RTSP Server application", []),
   application:start(listener),
@@ -89,23 +121,32 @@ start() ->
 send_response(Conn, Seq, Status, Headers, Body) -> 
   rtsp_connection:send_response(Conn, Seq, Status, Headers, Body).
 
--spec add_listener(inet:ip_address(), integer(), request_callback()) -> 
+%% ----------------------------------------------------------------------------
+%% @doc Starts a listener for inbound RTSP connections. Any RTSP requests 
+%%      received on connections accepted by on the resulting listener will be 
+%%      forwarded to the supplied callback for processing.
+%% @end
+%% ----------------------------------------------------------------------------
+-spec add_listener(Address :: inet:ip_address(),
+                   Port :: integer(), 
+                   Callback :: request_callback()) -> 
           {ok, listener:listener() } | {error, any()}.
+
 add_listener(Address, Port, Callback) ->
   rtsp_server:add_listener(Address, Port, Callback).
 
 
 %% ----------------------------------------------------------------------------
-%% @doc Attempts to authenticate a request and executes athe supplied on the 
+%% @doc Attempts to authenticate a request and executes the supplied on the 
 %%      resulting user info record if the athentication succeeds.
 %%
 %%      If no authentication info is present, the action is still executed, 
 %%      but the atom 'anonymous' is passed in place of the user info record. 
 %%
 %%      If authentication info is present but invalid, the function will
-%%      throw 'bad_request' or 'unauthorized', depending in the reason the
+%%      throw 'bad_request' or 'unauthorised', depending in the reason the
 %%      authentication fails.
-%% @throws bad_request | {unauthorized, stale}
+%% @throws bad_request | {unauthorised, stale}
 %% @end
 %% ----------------------------------------------------------------------------
 -spec with_authenticated_user_do(Conn   :: conn(),
@@ -156,7 +197,18 @@ get_header(Headers, Header) when is_record(Headers, rtsp_message_header) ->
     {ok, Values} -> Values;
     _ -> undefined
   end.
-  
+
+%% -----------------------------------------------------------------------------
+%% @doc 
+%% @end
+%% -----------------------------------------------------------------------------
+-spec get_session_id(Request :: message()) -> string().
+get_session_id(Request) when is_record(Request, rtsp_message)->
+  case get_message_header(?RTSP_HEADER_SESSION, Request) of
+    [Sid|_] -> Sid;
+    undefined -> ""
+  end.
+
 %% -----------------------------------------------------------------------------
 %% @doc Parses an RTSP transport header into a list of name/value options.
 %% @end
@@ -609,7 +661,7 @@ translate_status(Status) ->
   case Status of
     ok                    -> {200, "OK"};
     bad_request           -> {400, "Bad Request"};
-    unauthorized          -> {401, "Unauthorized"};
+    unauthorised          -> {401, "Unauthorised"};
     not_found             -> {404, "Not Found"};
     length_required       -> {411, "Length Required"};
     session_not_found     -> {454, "Session Not Found"};

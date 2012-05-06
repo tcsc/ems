@@ -71,7 +71,7 @@ handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
         case ems_server:create_session(Config, Path, UserInfo, Desc, []) of
           {ok, _} -> ok;
           already_exists -> method_not_valid;
-          not_authorized -> throw({unauthorized, auth_required});
+          not_authorised -> throw({unauthorised, auth_required});
           not_found -> not_found
         end,
       rtsp:send_response(Conn, Seq, Response, [], << >>)
@@ -82,7 +82,7 @@ handle_request(Config, Conn, Seq, "ANNOUNCE", Uri, Msg) ->
 % function has to determine the direction of the request and then translate
 % the request into something sensible for the ems_server to do.
 handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
-  {_, _, _, Path} = uri:parse(Uri),
+  {_, _, _, Path} = url:parse(Uri),
   TransportSpec = 
     case rtsp:get_message_header("Transport", Msg) of
       [TransportHeader] -> rtsp:parse_transport(TransportHeader);
@@ -92,17 +92,20 @@ handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
   SessionId = rtsp:get_session_id(Msg),
 
   LookupUser = fun(UserName) -> get_user_info(Config, UserName) end,  
-  
+
   Handler =
     fun(Uid) ->
       User = translate_user(Uid),
       Result = 
         case rtsp:transport_direction(TransportSpec) of 
           inbound -> 
-            ems_server:configure_channel(User, Path, SessionId, TransportSpec);
+            F = fun(Channel) -> 
+                  configure_channel(Config, Channel, User, TransportSpec)
+                end,
+            ems_server:with_broadcast_rights_on_channel_do(Config, Path, User, F)
           
           outbound ->
-            ems_server:subscribe_channel(User, Path, SessionId, TransportSpec)
+            ems_server:subscribe_channel(Config, Path, User, TransportSpec)
         end,
 
       {Response, ResponseHeaders} = 
@@ -113,8 +116,8 @@ handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
                        {?RTSP_HEADER_TRANSPORT, FormattedTransport}],
             {ok, RspHdrs};
 
-          not_authorized -> 
-            throw(unauthorized);
+          not_authorised -> 
+            throw(unauthorised);
         
           not_found -> {not_found, []};
           bad_request -> {bad_request, []}
@@ -128,6 +131,15 @@ handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
 % not explicitly handled above
 handle_request(_, Conn, Seq, _, _, _) ->
   rtsp:send_response(Conn, Seq, not_implemented, [], << >>).
+
+%% -----------------------------------------------------------------------------
+%% @doc Configures an inbound stream 
+%%
+%% @end
+%% -----------------------------------------------------------------------------
+configure_channel(Channel, User, Conn, TransportSpec) ->
+  {ok, Transport} = create_transport(Conn, TransportSpec),
+  ems_channel:configure_input(Channel, Transport)
 
 %% -----------------------------------------------------------------------------
 %%
@@ -175,3 +187,4 @@ translate_user(User = #rtsp_user_info{id = Id,
     when is_record(User, rtsp_user_info) ->
   #user_info{id = Id, login = LoginName, password = Pwd}.
   
+

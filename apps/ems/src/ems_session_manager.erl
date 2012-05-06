@@ -44,7 +44,8 @@ start_link() ->
 %% ----------------------------------------------------------------------------
 %% @doc Creates and registers a session with the session manager. It is assumed 
 %%      that the user has already been authenticated and validated by this 
-%%      po%% @end
+%%      point 
+%% @end
 %% ----------------------------------------------------------------------------
 -spec create_session(User :: ems:user_info(), 
                      Path :: string(), 

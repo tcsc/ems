@@ -164,7 +164,8 @@ hash(S) -> hex_string(erlang:md5(S)).
 -spec hex_string(binary()) -> string().
 hex_string(B) -> 
   H = case B of 
-        <<X:128/big-unsigned-integer>> -> lists:flatten(io_lib:format("~32.16.0b", [X]))
+        <<X:128/big-unsigned-integer>> -> 
+          lists:flatten(io_lib:format("~32.16.0b", [X]))
       end,
   H.
 

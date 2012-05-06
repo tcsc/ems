@@ -104,7 +104,9 @@ init(_Args) ->
 %% ----------------------------------------------------------------------------		
 %%
 %% ----------------------------------------------------------------------------	
--spec init_listener(State :: term()) -> {ok,Pidi :: pid()} | {error, Reason :: term()}.
+-spec init_listener(State :: term()) -> 
+  {ok, Pid :: pid()} | {error, Reason :: term()}.
+
 init_listener(State) ->
 	log:debug("listener:init_listener/1",[]),
 	case proc_lib:start_link(?MODULE, run_listener, [State]) of

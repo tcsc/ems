@@ -63,12 +63,12 @@ start_link(Path, Stream, RtpMap, Parent) ->
 %%      out exactly what it is I need to know at this point... 
 %% @end 
 %% ----------------------------------------------------------------------------
--spec configure_input(pid(), term(), term()) -> {ok, term()}. 
+-spec configure_input(pid(), term(), term()) -> {ok, ems:transport_spec()}. 
 
-configure_input(Pid, Transport, ClientAddress) ->
-  try 
+configure_input(Channel, Transpor) ->
+  try
     log:debug("ems_channel:configure_input/3", []),
-    gen_server:call(Pid, {configure, Transport, ClientAddress})
+    gen_server:call(Pid, {configure, Transport})
   catch
     exit:{timeout,_} -> {error, timeout};
 	  _Type:Err -> {error, Err}
@@ -112,7 +112,7 @@ init(State = #state{path = Path}) ->
 -spec handle_call(call_request(), From :: pid(), State :: state()) ->
   {reply, Reply :: term(), NewState :: state()}.
 
-handle_call({configure, TransportSpec, ClientAddress}, _From, State) ->
+handle_call({configure, TransportSpec}, _From, State) ->
   log:debug("ems_channel:handle_call/3 - handling stream configure", []),
 
   {_,RtpInfo} = State#state.rtp_map,

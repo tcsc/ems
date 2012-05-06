@@ -151,16 +151,20 @@ handle_call(activate, _From, State = #state{channels = Channels}) ->
 handle_call(get_channels, _From, State = #state{channels = Channels}) ->
   {reply, Channels, State};
 
-handle_call(_Request, _From, State) -> {noreply, State}.
+handle_call(_Request, _From, State) -> 
+  {noreply, State}.
 
-handle_cast(_Request, State) -> {noreply, State}.
+handle_cast(_Request, State) -> 
+  {noreply, State}.
 
-handle_info(_Msg, State) -> {noreply, State}.
+handle_info(_Msg, State) -> 
+  {noreply, State}.
 
 terminate(_Reason, State) -> 
   {noreply, State}.
 
-code_change(_OldVersion, State, _Extra) -> {ok, State}.
+code_change(_OldVersion, State, _Extra) -> 
+  {ok, State}.
 
 %% ----------------------------------------------------------------------------
 %%

@@ -11,10 +11,12 @@
 %% API functions
 %% ============================================================================
 
+%% ----------------------------------------------------------------------------
 %% @doc Called by the appliction entry point to start the RTSP supervisor 
 %%      process
 %% @private
 %% @end
+%% ----------------------------------------------------------------------------
 -spec start_link() -> {ok, pid()} | {error, any()}.
 start_link() -> 
   case supervisor:start_link({local, rtsp_sup}, ?MODULE, []) of
@@ -31,10 +33,14 @@ start_link() ->
 %% Supervisor callbacks
 %% ============================================================================
 
+%% ----------------------------------------------------------------------------
 %% @doc Returns a child spec list for the supervisor process to use.
 %% @private
 %% @end
-init(_) -> 
+%% ----------------------------------------------------------------------------
+init(_) ->
+  log:info("rtsp_sup:init/1 - Starting RTSP supervisor"),
+
   RtspServer = {
     rtsp_server,
     {rtsp_server, start_link, []},
@@ -51,5 +57,21 @@ init(_) ->
     worker,
     [rtsp_digest_server]
   },
-  {ok, {{one_for_one, 10, 1}, [DigestServer, RtspServer]}}.
+  TableManager = {
+    rtsp_session_table_mgr,
+    {rtsp_session_manager, start_table_manager, []},
+    permanent,
+    brutal_kill,
+    worker,
+    [rtsp_session_manager]
+  },  
+  SessionManager = {
+    rtsp_session_manager,
+    {rtsp_session_manager, start_link, []},
+    permanent,
+    brutal_kill,
+    worker,
+    [rtsp_sesstion_manager]
+  },
+  {ok, {{one_for_one, 10, 1}, [DigestServer, TableManager, SessionManager, RtspServer]}}.
 
