@@ -3,7 +3,8 @@
 %%% ============================================================================
 -module (stringutils).
 -export([
-  extract_token/3, 
+  extract_token/3,
+  find_in_binary/2, 
   to_int_def/2,
   int_to_string/1,
   index_of/2, 
@@ -34,10 +35,32 @@ extract_token(Bin, Offset, Separator, Result) ->
 			extract_token(Bin, Offset+1, Separator, [N|Result]);
 			
 		_ ->
-			% scanned the entire binary, didn't find it. Time to bail
+			% scanned the entire binary, didn't find the delimiter. Time to bail.
 			{lists:reverse(Result), Offset} 
 	end.
-	
+
+%% ----------------------------------------------------------------------------
+%% @doc Attempts to find a sequence of bytes in a binary, returning the index 
+%%      of the substring on success.
+%% @end
+%% ----------------------------------------------------------------------------
+-spec find_in_binary(Str :: binary(), 
+                     SubStr :: binary()) -> false | pos_integer().
+
+find_in_binary(Str,SubStr) when byte_size(SubStr) > byte_size(Str) -> false;
+find_in_binary(Str,SubStr) ->
+  find_in_binary(Str, byte_size(Str), SubStr, byte_size(SubStr), 0).
+
+find_in_binary(_, StrLen, _, _, Offset) when Offset >= StrLen -> 
+  false;  
+
+find_in_binary(Str, StrLen, SubStr, SubStrLen, Offset) ->
+  case Str of
+    <<>> -> false;
+    <<_:Offset/binary, SubStr:SubStrLen/binary, _/binary>> -> Offset;
+    _ -> find_in_binary(Str, StrLen, SubStr, SubStrLen, Offset+1)
+  end.
+
 %% ----------------------------------------------------------------------------
 %% @doc Parses a string into an integer, returning the default if the parsing
 %%      fails.

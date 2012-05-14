@@ -1,6 +1,7 @@
 -module (rtsp_connection_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("rtsp.hrl").
+-import(stringutils, [find_in_binary/2]).
 
 request_handler(_Conn, _Req) -> ok.
 
@@ -9,6 +10,7 @@ request_handler(_Conn, _Req) -> ok.
 %% @end
 %% ----------------------------------------------------------------------------
 create_channel_test() ->
+  ?debugMsg("*** Entering create_channel_test() ***"),
   {ok, Conn} = rtsp_connection:new(dummy, "Testing", fun request_handler/2),
   try
     Me = self(),
@@ -52,7 +54,78 @@ check_response(ExpectedChannel, ExpectedData) ->
       ?assert(false)
   end.
 
+%% ----------------------------------------------------------------------------
+%% @doc Tests sending data on interleaved channels from the server to the 
+%%      client.
+%% @doc
+%% ----------------------------------------------------------------------------
+write_channel_test() ->
+  ?debugMsg("*** Entering write_channel_test() ***"),
+  Me = self(),
+  {ok, Conn} = rtsp_connection:new(dummy, "Test", fun request_handler/2),
+  try
+    Handler0 = fun(Buf) -> Me ! {got_buffer, 0, Buf} end,
+    Handler3 = fun(Buf) -> Me ! {got_buffer, 3, Buf} end,
+    ChannelSpec = [{0, Handler0}, {3, Handler3}],
+    {Client,Server} = create_socket_pair(),
+    
+    ?debugMsg("Setting up setup sockets"),
+    rtsp_connection:take_socket(Conn, Server),
+    inet:setopts(Client, [{active, true}]),
 
+    case rtsp_connection:create_channels(Conn, ChannelSpec) of
+      {ok, [Ch0, Ch3]} ->
+        ?debugMsg("Writing Channel Data"),
+        rtsp_connection:write_channel(Ch3, <<"hello on channel three">>),
+        rtsp_connection:write_channel(Ch0, <<"hello on channel zero">>),
+        rtsp_connection:write_channel(Ch3, <<"goodbye from channel three">>),
+        rtsp_connection:write_channel(Ch0, <<"goodbye from channel zero">>),
+        
+        ?debugMsg("Reading data"),
+        Buf = read_data(Client, <<>>),
+
+        ?debugMsg("Checking assertions"),
+        ?assert(is_in_buffer(Buf, <<$$, 3, 0, 22, "hello on channel three">>)),
+        ?assert(is_in_buffer(Buf, <<$$, 0, 0, 21, "hello on channel zero">>)),
+        ?assert(is_in_buffer(Buf, <<$$, 3, 0, 26, "goodbye from channel three">>)),
+        ?assert(is_in_buffer(Buf, <<$$, 0, 0, 25, "goodbye from channel zero">>)),
+    
+        ?debugMsg("Assertions checked")
+    end
+  after
+    ?debugMsg("Cleaning up"),
+    rtsp_connection:close(Conn)
+  end.
+
+is_in_buffer(Str, Pattern) ->
+  case find_in_binary(Str, Pattern) of
+    N when is_integer(N) -> true;
+    false -> false
+  end.
+
+read_data(S, B) ->
+  receive  
+    {tcp, S, Data} -> 
+      ?debugFmt("Read ~w bytes", [byte_size(Data)]),
+      read_data(S, <<B/binary, Data/binary>>);
+    
+    {tcp_closed, S} ->
+      ?debugMsg("Socket Closed"),
+      B;
+    
+    {tcp_error, S, E} -> 
+      ?debugFmt("Unexpected error code: ~w", [E]),
+      ?assert(false)
+  after
+    100 ->
+      ?debugMsg("Timing out read"),
+      B
+  end.
+
+%% ----------------------------------------------------------------------------
+%% @doc Creates a connected socket pair to help with testing.
+%% @end
+%% ----------------------------------------------------------------------------
 create_socket_pair() ->
   Me = self(),
   Listener = 
@@ -84,7 +157,7 @@ create_socket_pair() ->
   ?debugMsg("Waiting for port"), 
   Port = receive {server_port, P} -> P end,
 
-  case gen_tcp:connect("localhost", Port, []) of
+  case gen_tcp:connect("localhost", Port, [{active, false}, binary]) of
     {ok, Client} -> 
       Server = receive {server_socket, S} -> S end,
       {Client, Server};

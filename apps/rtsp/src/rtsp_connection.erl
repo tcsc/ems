@@ -9,6 +9,7 @@
 -export([new/3, 
          close/1,
          create_channels/2,
+         write_channel/2,
          channel_index/1,
          take_socket/2, 
          get_client_address/1, 
@@ -44,9 +45,8 @@
 %% ============================================================================
 
 -type buffer_handler() :: fun((binary())->any()).
--record(channel, {queue      :: [binary()],
-                  handler    :: buffer_handler()} ).
--type channel_state() :: #channel{}.
+-record(channel, {queue = queue:new() :: queue(),
+                  handler             :: buffer_handler()} ).
 -type channel() :: {rtsp:conn(), integer()}.
 
 %% ----------------------------------------------------------------------------
@@ -62,12 +62,15 @@
                  pending_data           :: binary(),
                  callback               :: rtsp:request_callback(),
                  channels = array:new() :: array(),
-                 handlers               :: [{integer(), fun(()->term())}]
+                 last_channel = -1      :: integer(),
+                 outbound_messages = [] :: [rtsp:message()],
+                 sender_waiting = false :: boolean()
                }).
--type state() :: #state{}.
 
 -define(SP,16#20).
 
+%% Set to infinity for debugging
+-define(timeout, infinity).
 
 %% ============================================================================
 %% Public API
@@ -86,6 +89,11 @@ new(_Owner, ServerStr, Callback) ->
                   callback         = Callback },
   gen_fsm:start_link(?MODULE, State, []).
 
+
+%% ----------------------------------------------------------------------------
+%% @doc Closes a connection and shuts down the socket. 
+%% @end 
+%% ----------------------------------------------------------------------------
 close(Conn) ->
   gen_fsm:sync_send_all_state_event(Conn, quit).
 
@@ -99,7 +107,7 @@ take_socket(Conn, Socket) ->
   ok.
 
 get_client_address(Conn) ->
-  gen_fsm:sync_send_all_state_event(Conn, get_client_address).
+  gen_fsm:sync_send_all_state_event(Conn, get_client_address, ?timeout).
 
 %% ----------------------------------------------------------------------------
 %% @doc Reserves a set of channels on the RTSP connection. The connection will
@@ -117,15 +125,21 @@ get_client_address(Conn) ->
   {ok, [channel()]} | {error, term()}.
   
 create_channels(Conn, Indices) ->
-  X = gen_fsm:sync_send_all_state_event(Conn, {create_channels, Indices}),
-  io:format("rval: ~w~n", [X]),
-  X.
+  gen_fsm:sync_send_all_state_event(Conn, {create_channels, Indices}, ?timeout).
 
 %% ----------------------------------------------------------------------------
 %% ----------------------------------------------------------------------------
 -spec channel_index(channel()) -> integer().
 channel_index({_,Index}) -> 
   Index. 
+
+%% ----------------------------------------------------------------------------
+%% @doc Writes a data packet to the supplied channel
+%% @end
+%% ----------------------------------------------------------------------------
+-spec write_channel(channel(), binary()) -> ok | {error, term()}.
+write_channel({Conn, Index}, Data) ->
+  gen_fsm:send_all_state_event(Conn, {write_channel, Index, Data}).
 
 %% ============================================================================
 %% gen_fsm API
@@ -146,23 +160,37 @@ handle_event({send_response, Sequence, Status, ExtraHeaders, Body},
              StateName, 
              State) ->
 
-  log:debug("rtsp_connection:handle_info/3 - send_response to request ~w (~w)", 
+  log:debug("rtsp_connection:handle_event/3 - send_response to request ~w (~w)", 
     [Sequence, Status]),
 
-  StateP = case deregister_pending_request(Sequence, State) of 
-    {Msg, S} -> 
-      Rq = Msg#rtsp_message.message,
-      RtspVersion = Rq#rtsp_request.version,
-      AllHeaders = build_response_headers(Sequence, byte_size(Body), ExtraHeaders),
-      Response = #rtsp_response{status = Status, version = RtspVersion}, 
-      Bytes = rtsp:format_message(Response, AllHeaders, Body),
-      send_data(S, Bytes),
-      S;
+  StateP = 
+    case deregister_pending_request(Sequence, State) of 
+      {Msg, S} -> 
+        Rq = Msg#rtsp_message.message,
+        RtspVersion = Rq#rtsp_request.version,
+        AllHeaders = build_response_headers(Sequence, byte_size(Body), ExtraHeaders),
+        Response = #rtsp_response{status = Status, version = RtspVersion}, 
+        Bytes = rtsp:format_message(Response, AllHeaders, Body),
+        send_data(S, Bytes),
+        S;
 
-    _ -> 
-      State
-  end,
+      _ -> 
+        State
+    end,
   {next_state, StateName, StateP};
+
+handle_event({write_channel, Index, Data}, StateName, 
+             #state{channels = Channels,
+                    sender_waiting = SenderWaiting} = State) ->
+  Ch = array:get(Index, Channels),
+  Q = queue:in(Data, Ch#channel.queue),
+  NewState = State#state{
+    channels = array:set(Index, Ch#channel{queue = Q}, Channels)},
+  FinalState = 
+    if SenderWaiting -> send_item(NewState);
+       true -> NewState
+    end,
+  {next_state, StateName, FinalState};
 
 handle_event(_Event, StateName, StateData) -> 
   log:debug("rtsp_connection:handle_event/3 - ~w", [StateName]),
@@ -207,9 +235,9 @@ handle_info({tcp_closed, _Socket}, _StateName, State) ->
   log:debug("rtsp_connection:handle_info/3 - tcp connection closed",[]),
   {stop, normal, State};
 
-handle_info({sender_waiting, _SendingPid}, StateName, StateData) ->
-  log:debug("rtsp_connection:handle_info/2 - sender waiting"),
-  {next_state, StateName, StateData};
+% Handles the sender thread asking for more data to send
+handle_info({sender_waiting, _SenderPid}, StateName, State) ->
+  {next_state, StateName, send_item(State)};
 
 handle_info(Info, StateName, StateData) ->
   log:debug("rtsp_connection:handle_info/3 ~w, ~w, ~w", 
@@ -294,6 +322,75 @@ ready(Event, State) ->
 %% ============================================================================
 %% Internal Functions 
 %% ============================================================================
+
+-spec send_item(State :: #state{}) -> NewState :: #state{}.
+send_item(#state{outbound_messages = Messages, sender = TxPid} = State) ->
+  case Messages of
+    [M|T] -> 
+      TxPid ! {send_item, self(), M},
+      State#state{outbound_messages = T, sender_waiting = false};
+
+    [] -> 
+      case get_packet_to_send(State) of
+        {ok, Packet, NewState} ->
+          TxPid ! {send_item, self(), Packet},
+          NewState#state{sender_waiting = false};
+
+        false ->
+          State#state{sender_waiting = true}
+      end
+  end.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+-spec get_packet_to_send(#state{}) -> {ok, binary(), #state{}} | false.
+get_packet_to_send(#state{last_channel = LastCh, channels = Chs} = State) ->
+  ChCount = array:size(Chs),
+  ChIndex = (LastCh + 1) rem ChCount,
+  case get_packet_to_send(ChIndex, Chs, ChCount, 0) of
+    {ok, ChId, Packet, NewChannels} ->
+      NewState = State#state{last_channel = ChId, channels = NewChannels},
+      {ok, Packet, NewState};
+    false -> false
+  end.
+
+%% ----------------------------------------------------------------------------
+%% @doc Implements the actual round-robin packet scheduler for the interleaved 
+%%      RTSP channels. Also formats the interleaved packet for sending.
+%% @end. 
+%% ----------------------------------------------------------------------------
+-spec get_packet_to_send(ChIndex :: integer(), 
+                         Channels :: array(),
+                         ChCount :: integer(),
+                         PollCount :: integer()) -> 
+    {ok, ChannelId :: integer(), Data :: binary(), NewChannels :: array()} | 
+    false. 
+
+% handles the case when we've tested all available channels 
+get_packet_to_send(_, _, ChCount, PollCount) when ChCount == PollCount -> 
+  false;
+
+% handles the case 
+get_packet_to_send(ChIndex, Channels, ChCount, PollCount) ->
+  NextCh = (ChIndex + 1) rem ChCount,
+  case array:get(ChIndex, Channels) of
+    undefined -> 
+      get_packet_to_send(NextCh, Channels, ChCount, PollCount + 1);
+
+    Channel when is_record(Channel, channel) -> 
+      case queue:out(Channel#channel.queue) of
+        {{value, B}, NewQ} ->
+          Size = byte_size(B),
+          Data = <<$$:8, ChIndex:8, Size:16/big-integer, B/binary>>,
+          NewChannel = Channel#channel{queue = NewQ},
+          NewChannels = array:set(ChIndex, NewChannel, Channels),
+          {ok, ChIndex, Data, NewChannels};
+
+        {empty, _} ->
+          get_packet_to_send(NextCh, Channels, ChCount, PollCount + 1)
+      end
+  end.
 
 %% ----------------------------------------------------------------------------
 %% @doc Handles inbound data, leaving any leftover data in the StateData block
@@ -389,16 +486,14 @@ handle_data(Data, StateData, _State) ->
 deliver_packet(#state{channels = Channels} = _State, ChannelIndex, Buffer) ->
   case array:get(ChannelIndex, Channels) of
     Channel when is_record(Channel, channel) -> 
-      io:format("Forwarding data on Channel ~w", [ChannelIndex]),
       Handler = Channel#channel.handler,
       Handler(Buffer);
 
     undefined -> 
-      io:format("No channel on index"),
       log:warning("Received packet on unregistered channel ~w", [ChannelIndex]);
   
     Err ->
-      io:format("Unexpected data: ~w", [Err])
+      log:error("Unexpected data: ~w", [Err])
   end.
 
 %% ============================================================================
@@ -409,9 +504,8 @@ deliver_packet(#state{channels = Channels} = _State, ChannelIndex, Buffer) ->
 %% @doc Dispatches an RTSP message for handling on a new process. 
 %% @end
 %% ---------------------------------------------------------------------------- 
--spec dispatch_message(rtsp:message(), state()) -> state().
+-spec dispatch_message(rtsp:message(), #state{}) -> #state{}.
 dispatch_message(Msg, State) when is_record(Msg, rtsp_message) ->
-
   case element(1, Msg#rtsp_message.message) of
     rtsp_request ->
       {Method, Uri, Seq, _, _} = rtsp:get_request_info(Msg),
@@ -480,10 +574,11 @@ send_auth_response(Conn, Seq, Flags) ->
 %% @end
 %% ----------------------------------------------------------------------------
 build_response_headers(Sequence, ContentLength, Headers) ->
-  ContentType = case lists:keyfind(content_type, 1, Headers) of
-    {content_type,CType} when is_list(CType) -> CType;
-    _ -> ""
-  end,
+  ContentType = 
+    case lists:keyfind(content_type, 1, Headers) of
+      {content_type,CType} when is_list(CType) -> CType;
+      _ -> ""
+    end,
   
   % filter out any of the headers that we'll be setting explicitly
   FilteredHeaders = lists:filter(
@@ -529,8 +624,10 @@ register_pending_request(Seq, Request, State) ->
 %%      request
 %% @end
 %% ----------------------------------------------------------------------------
--spec deregister_pending_request(integer(),state()) -> {rtsp:message(),state()} 
-                                                       | state().
+-spec deregister_pending_request(integer(), #state{}) ->
+        {rtsp:message(), #state{}}  | 
+        #state{}.
+
 deregister_pending_request(Seq, State) ->
   PendingRequests = State#state.pending_requests,
   case dict:find(Seq, PendingRequests) of 
@@ -561,7 +658,7 @@ register_channels(Conn, [Channel|Rest], State, NewChannels) ->
       case array:get(Index, Channels) of
         % Undefined means that the channel is free. Who-hoo, we can use it.
         undefined -> 
-          NewChannel = #channel{queue = [], handler = Callback},
+          NewChannel = #channel{handler = Callback},
           Handle = {Conn, Index},
           NewState = State#state{channels = 
                                    array:set(Index, NewChannel, Channels)},
@@ -663,7 +760,7 @@ start_sender(ConnectionPid, Socket) ->
 stop_sender(SenderPid) ->
   SenderPid ! {exit_sender, self()},
   receive 
-    {sender_exited, ok} -> ok
+    sender_exited -> ok
   after
     1000 -> timed_out
   end.
@@ -674,14 +771,17 @@ stop_sender(SenderPid) ->
 %%      quit.
 %% @end
 %% ----------------------------------------------------------------------------
-sender_loop(ConnectionPid, Socket) ->
+sender_loop(Conn, Socket) ->
+  Conn ! {sender_waiting, self()},
   receive
-    {rtsp_send, _Sender, Data} when is_binary(Data)->
-      gen_tcp:send(Socket,Data),
-      ConnectionPid ! {sender_waiting, self()},
-      sender_loop(ConnectionPid, Socket);
+    {send_item, Sender, Data} when is_binary(Data) and (Sender == Conn) ->
+      gen_tcp:send(Socket, Data),
+      sender_loop(Conn, Socket);
       
-    {exit_sender, Sender} when Sender == ConnectionPid ->
-      Sender ! {sender_exited, ok},
-      ok
-   end.
+    {exit_sender, Sender} when Sender == Conn ->
+      Conn ! sender_exited,
+      ok;
+
+    _Other ->
+      sender_loop(Conn, Socket)
+  end.
