@@ -6,6 +6,52 @@
 request_handler(_Conn, _Req) -> ok.
 
 %% ----------------------------------------------------------------------------
+%% @doc Test receiving an RTSP message from the client
+%% @end
+%% ----------------------------------------------------------------------------
+receive_message_test() ->
+  ?debugMsg("*** Entering receive_message_test ***"),
+  Me = self(),
+  Handler = fun(_Conn, Req) -> Me ! {received_request, Req} end,
+  {ok, Conn} = rtsp_connection:new(test, "Testing", Handler),
+  try
+    ?debugMsg("Creating socket pair"),
+    {Client,Server} = create_socket_pair(),
+    rtsp_connection:take_socket(Conn,Server),
+    gen_tcp:send(Client, <<"DESCRIBE rtsp://localhost/ RTSP/1.0", 13, 10,
+                           "CSeq: 42", 13, 10,
+                           "Content-Length: 12", 13, 10,
+                           "Content-Type: text/plain", 13, 10, 13, 10,
+                           "Hello, world">>),
+    ?debugMsg("Waiting for request"),
+    receive
+      {received_request, Msg} ->
+        ?debugMsg("Received message"),
+        ?assertEqual("text/plain", rtsp:message_content_type(Msg)),
+        ?assertEqual(12, rtsp:message_content_length(Msg)),
+        ?assertEqual(<<"Hello, world">>, rtsp:message_body(Msg)),
+        ?assertEqual(42, rtsp:message_sequence(Msg)),
+
+        case Msg#rtsp_message.message of
+          Rq when is_record(Rq, rtsp_request) -> 
+            ?debugMsg("Received request"),
+            ?assert(Rq#rtsp_request.method == "DESCRIBE");
+
+          _ -> 
+            ?debugMsg("Invalid record type"),
+            ?assert(false)
+        end
+    after
+      500 ->
+        ?debugMsg("Timed out"),
+        ?assert(false)
+    end
+  after
+    ?debugMsg("Cleaning up"),
+    rtsp_connection:close(Conn)
+  end. 
+
+%% ----------------------------------------------------------------------------
 %% @doc Tests creating and using interleaved channels in an rtsp connection.
 %% @end
 %% ----------------------------------------------------------------------------

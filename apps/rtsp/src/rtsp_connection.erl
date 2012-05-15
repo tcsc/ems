@@ -54,17 +54,17 @@
 %% @end
 %% ----------------------------------------------------------------------------
 
--record(state, { server_str             :: string(),
-                 socket                 :: inet:socket(),
-                 sender                 :: pid(),
-                 pending_message        :: rtsp:message(),
-                 pending_requests       :: dict(),
-                 pending_data           :: binary(),
-                 callback               :: rtsp:request_callback(),
-                 channels = array:new() :: array(),
-                 last_channel = -1      :: integer(),
-                 outbound_messages = [] :: [rtsp:message()],
-                 sender_waiting = false :: boolean()
+-record(state, { server_str                  :: string(),
+                 socket                      :: inet:socket(),
+                 sender                      :: pid(),
+                 pending_message             :: rtsp:message(),
+                 pending_requests            :: dict(),
+                 pending_data                :: binary(),
+                 callback                    :: rtsp:request_callback(),
+                 channels = array:new()      :: array(),
+                 last_channel = -1           :: integer(),
+                 message_queue = queue:new() :: queue(),
+                 sender_waiting = false      :: boolean()
                }).
 
 -define(SP,16#20).
@@ -165,30 +165,26 @@ handle_event({send_response, Sequence, Status, ExtraHeaders, Body},
 
   StateP = 
     case deregister_pending_request(Sequence, State) of 
-      {Msg, S} -> 
+      {Msg, NewState} -> 
         Rq = Msg#rtsp_message.message,
         RtspVersion = Rq#rtsp_request.version,
-        AllHeaders = build_response_headers(Sequence, byte_size(Body), ExtraHeaders),
+        Size = byte_size(Body),
+        AllHeaders = build_response_headers(Sequence, Size, ExtraHeaders),
         Response = #rtsp_response{status = Status, version = RtspVersion}, 
         Bytes = rtsp:format_message(Response, AllHeaders, Body),
-        send_data(S, Bytes),
-        S;
+        queue_message(Bytes, NewState);
 
       _ -> 
         State
     end,
   {next_state, StateName, StateP};
 
-handle_event({write_channel, Index, Data}, StateName, 
-             #state{channels = Channels,
-                    sender_waiting = SenderWaiting} = State) ->
-  Ch = array:get(Index, Channels),
-  Q = queue:in(Data, Ch#channel.queue),
-  NewState = State#state{
-    channels = array:set(Index, Ch#channel{queue = Q}, Channels)},
+handle_event({write_channel, Index, Data}, StateName, State) ->
+  NewState = queue_packet(Index, Data, State),
   FinalState = 
-    if SenderWaiting -> send_item(NewState);
-       true -> NewState
+    case NewState#state.sender_waiting of 
+      true -> send_item(NewState);
+      false -> NewState
     end,
   {next_state, StateName, FinalState};
 
@@ -323,14 +319,46 @@ ready(Event, State) ->
 %% Internal Functions 
 %% ============================================================================
 
--spec send_item(State :: #state{}) -> NewState :: #state{}.
-send_item(#state{outbound_messages = Messages, sender = TxPid} = State) ->
-  case Messages of
-    [M|T] -> 
-      TxPid ! {send_item, self(), M},
-      State#state{outbound_messages = T, sender_waiting = false};
+%% ----------------------------------------------------------------------------
+%% @doc
+%% @end
+%% ----------------------------------------------------------------------------
+-spec queue_message(Message :: binary(), State :: #state{}) -> 
+        NewState :: #state{}.
+queue_message(Message, #state{message_queue = Q} = State) ->
+  NewQ = queue:in(Message, Q),
+  NewState = State#state{message_queue = NewQ},
+  case State#state.sender_waiting of
+    true -> send_item(NewState);
+    false -> NewState
+  end.
 
-    [] -> 
+%% ----------------------------------------------------------------------------
+%% @doc
+%% @end
+%% ----------------------------------------------------------------------------
+-spec queue_packet(Id :: pos_integer(),
+                   Data :: binary(), 
+                   State :: #state{}) -> NewState :: #state{}. 
+
+queue_packet(Id, Data, #state{channels = Channels} = State) ->
+  Ch = array:get(Id, Channels),
+  Q = queue:in(Data, Ch#channel.queue),
+  NewChannels = array:set(Id, Ch#channel{queue = Q}, Channels),
+  State#state{channels = NewChannels}.
+                          
+%% ----------------------------------------------------------------------------
+%% @doc
+%% @end
+%% ----------------------------------------------------------------------------
+-spec send_item(State :: #state{}) -> NewState :: #state{}.
+send_item(#state{message_queue = Messages, sender = TxPid} = State) ->
+  case queue:out(Messages) of
+    {{value, M}, Q} ->
+      TxPid ! {send_item, self(), M},
+      State#state{message_queue = Q, sender_waiting = false};
+
+    {empty, _} ->
       case get_packet_to_send(State) of
         {ok, Packet, NewState} ->
           TxPid ! {send_item, self(), Packet},
@@ -345,14 +373,18 @@ send_item(#state{outbound_messages = Messages, sender = TxPid} = State) ->
 %%
 %% ----------------------------------------------------------------------------
 -spec get_packet_to_send(#state{}) -> {ok, binary(), #state{}} | false.
+
 get_packet_to_send(#state{last_channel = LastCh, channels = Chs} = State) ->
-  ChCount = array:size(Chs),
-  ChIndex = (LastCh + 1) rem ChCount,
-  case get_packet_to_send(ChIndex, Chs, ChCount, 0) of
-    {ok, ChId, Packet, NewChannels} ->
-      NewState = State#state{last_channel = ChId, channels = NewChannels},
-      {ok, Packet, NewState};
-    false -> false
+  case array:size(Chs) of
+    0 -> false;
+    ChCount -> 
+      ChIndex = (LastCh + 1) rem ChCount,
+      case get_packet_to_send(ChIndex, Chs, ChCount, 0) of
+        {ok, ChId, Packet, NewChannels} ->
+          NewState = State#state{last_channel = ChId, channels = NewChannels},
+          {ok, Packet, NewState};
+        false -> false
+      end
   end.
 
 %% ----------------------------------------------------------------------------
@@ -734,14 +766,6 @@ with_authenticated_user_do(Conn, Rq, PwdCb, Action) ->
 %% RTSP Sender implementation
 %% ============================================================================
 
-%% ----------------------------------------------------------------------------
-%% @doc Enqueues data with the sender process for transmission to the client
-%% @end
-%% ----------------------------------------------------------------------------
-send_data(_State = #state{sender=SenderPid}, Data) ->
-  SenderPid ! {rtsp_send, self(), Data},
-  ok.
-  
 %% ----------------------------------------------------------------------------
 %% @doc Starts the writer process for this connection
 %% @end

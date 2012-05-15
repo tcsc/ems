@@ -20,8 +20,10 @@
   get_request_info/1,
   is_request/1,
   is_response/1,
+  message_body/1,
   message_content_length/1,
   message_content_type/1,
+  message_sequence/1,
   send_response/5,
   translate_status/1,
   with_authenticated_user_do/4]).
@@ -705,6 +707,19 @@ message_content_length(#rtsp_message{headers = Hdrs}) ->
 -spec message_content_type(message()) -> string().
 message_content_type(#rtsp_message{headers = Hdrs}) -> 
   Hdrs#rtsp_message_header.content_type.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+-spec message_body(message()) -> binary().
+message_body(#rtsp_message{body = Body}) -> Body.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+-spec message_sequence(message()) -> integer().
+message_sequence(#rtsp_message{headers = Hdrs}) ->
+  Hdrs#rtsp_message_header.sequence.
 
 %% ----------------------------------------------------------------------------
 %% @doc Extracts some commonly-used bits out of an RTSP request and returns 
