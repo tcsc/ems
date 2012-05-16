@@ -52,6 +52,50 @@ receive_message_test() ->
   end. 
 
 %% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+receive_and_reply_test() ->
+  ?debugMsg("*** Entering receive_and_reply_test ***"),
+  Handler = 
+    fun(Conn, Req) ->
+      ?debugMsg("Received Message"),
+      rtsp:send_response(Conn, rtsp:message_sequence(Req), ok, [], 
+                         <<"abcdefghijk">>)
+    end,
+  {ok, Conn} = rtsp_connection:new(test, "Testing", Handler),
+  try
+    ?debugMsg("Creating socket pair"),
+    {Client, Server} = create_socket_pair(),
+    inet:setopts(Client, [{active, true}]),
+    
+    rtsp_connection:take_socket(Conn, Server),
+
+    ?debugMsg("Sending message"),
+    gen_tcp:send(Client, <<"DESCRIBE rtsp://localhost/ RTSP/1.0", 13, 10,
+                           "CSeq: 42", 13, 10,
+                           "Content-Length: 12", 13, 10,
+                           "Content-Type: text/plain", 13, 10, 13, 10,
+                           "Hello, world">>),
+
+    ?debugMsg("Waiting for response"),
+    Buf = read_data(Client, <<>>),
+  
+    Expected = <<"RTSP/1.0 200 OK", 13, 10,
+                 "CSeq: 42", 13, 10,
+                 "Content-Length: 11", 13, 10,
+                 "Server: EMS RTSP Service/0.1", 13, 10,
+                 13, 10,
+                 "abcdefghijk">>,
+
+    ?debugMsg("Checking assertions"),
+    ?assertEqual(Expected, Buf)
+
+  after
+    ?debugMsg("Cleaning up"),
+    rtsp_connection:close(Conn)
+  end.
+
+%% ----------------------------------------------------------------------------
 %% @doc Tests creating and using interleaved channels in an rtsp connection.
 %% @end
 %% ----------------------------------------------------------------------------

@@ -48,17 +48,14 @@ extract_token(Bin, Offset, Separator, Result) ->
                      SubStr :: binary()) -> false | pos_integer().
 
 find_in_binary(Str,SubStr) when byte_size(SubStr) > byte_size(Str) -> false;
-find_in_binary(Str,SubStr) ->
-  find_in_binary(Str, byte_size(Str), SubStr, byte_size(SubStr), 0).
+find_in_binary(Str, SubStr) ->
+  find_in_binary(Str, SubStr, byte_size(SubStr), 0).
 
-find_in_binary(_, StrLen, _, _, Offset) when Offset >= StrLen -> 
-  false;  
-
-find_in_binary(Str, StrLen, SubStr, SubStrLen, Offset) ->
+find_in_binary(<<>>,_,_,_) -> false;
+find_in_binary(Str = <<_,Tail/binary>>, SubStr, SubStrLen, Offset) ->
   case Str of
-    <<>> -> false;
-    <<_:Offset/binary, SubStr:SubStrLen/binary, _/binary>> -> Offset;
-    _ -> find_in_binary(Str, StrLen, SubStr, SubStrLen, Offset+1)
+    <<SubStr:SubStrLen/binary, _/binary>> -> Offset;
+    _ -> find_in_binary(Tail, SubStr, SubStrLen, Offset+1)
   end.
 
 %% ----------------------------------------------------------------------------
