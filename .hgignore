@@ -3,6 +3,8 @@ syntax: glob
 *.app
 *.swp
 *.plt
+*.swo
+session.vim
 doc/*
 deps/*
 .DS_Store
