@@ -113,17 +113,18 @@ create_session(Config, Path, User, Desc, _Options) ->
 %%      the channel, and anonymous users are not allowed.
 %% @doc 
 %% ----------------------------------------------------------------------------
--spec configure_channel( User :: ems:user_info(),
+-spec configure_channel( Config :: ems_config:handle(),
+                         User :: ems:user_info(),
                          Path :: string(),
                          SessionId :: string(),
                          TransportSpec :: ems:transport_spec() ) -> 
                             {error, unauthorized | atom() } | 
                             {ok, ems:transport_spec()}.
 
-configure_channel(anonymous, _, _, _) -> unauthorized;
-configure_channel(User, Path, SessionId, TransportSpec) ->
+configure_channel(Config, anonymous, _, _, _) -> unauthorized;
+configure_channel(Config, User, Path, SessionId, TransportSpec) ->
   F = fun(Channel) ->
-        
+       ok  
       end,
   with_broadcast_rights_on_channel_do(Config, Path, User, F).
 

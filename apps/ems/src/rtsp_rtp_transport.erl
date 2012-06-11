@@ -3,7 +3,7 @@
 -behaviour(rtp_transport).
 
 % Behaviour exports -----------------------------------------------------------
--export([init/3, describe/1, send/2, set_callback/2, destroy/1]).
+-export([init/1, describe/1, send/2, set_callback/2, destroy/1]).
 
 % public API exports ----------------------------------------------------------
 -export([new/3]).
@@ -33,14 +33,13 @@ new(Conn, Session, TransportSpec) ->
 %%      the loss of the transport up the chain. 
 %% @end
 %% ----------------------------------------------------------------------------
--spec init(OnRtpPacket  :: rtp_transport:packet_handler(), 
-           OnRtcpPacket :: rtp_transport:packet_handler(),
-           Arguments    :: term()) -> {ok, rtsp_transport()} | {error, term()}.
+-spec init(Arguments :: {rtsp:conn(), rtsp:transport_spec()}) -> 
+  {ok, rtsp_transport()} | {error, term()}.
 
-init(OnRtpPacket, OnRtcpPacket, {Conn, _Session, TransportSpec}) -> 
+init({Conn, TransportSpec}) -> 
   case lists:keyfind(interleaved, 1, TransportSpec) of
     {interleaved, [RtpIndex,RtcpIndex]} ->
-      ChannelArgs = [{RtpIndex, OnRtpPacket},{RtcpIndex, OnRtcpPacket}],
+      ChannelArgs = [{RtpIndex, undefined},{RtcpIndex, undefined}],
       case rtsp_connection:create_channels(Conn, ChannelArgs) of
         {ok, [RtpChannel,RtcpChannel]} ->  
           Transport = #rtsp_transport{rtp_channel = RtpChannel, 

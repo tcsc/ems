@@ -91,7 +91,8 @@ handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
 
   SessionId = rtsp:get_session_id(Msg),
 
-  LookupUser = fun(UserName) -> get_user_info(Config, UserName) end,  
+  LookupUser = 
+    fun(UserName) -> get_user_info(Config, UserName) end,  
 
   Handler =
     fun(Uid) ->
@@ -102,7 +103,7 @@ handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
             F = fun(Channel) -> 
                   configure_channel(Config, Channel, User, TransportSpec)
                 end,
-            ems_server:with_broadcast_rights_on_channel_do(Config, Path, User, F)
+            ems_server:with_broadcast_rights_on_channel_do(Config, Path, User, F);
           
           outbound ->
             ems_server:subscribe_channel(Config, Path, User, TransportSpec)
@@ -124,7 +125,6 @@ handle_request(Config, Conn, Seq, "SETUP", Uri, Msg) ->
         end,
       rtsp:send_response(Conn, Seq, Response, ResponseHeaders, << >>)
     end,
-
   rtsp:with_authenticated_user_do(Conn, Msg, LookupUser, Handler);  
 
 % Default request handler - issues a "NOT IMPLEMENTED" response to anything 
@@ -133,14 +133,31 @@ handle_request(_, Conn, Seq, _, _, _) ->
   rtsp:send_response(Conn, Seq, not_implemented, [], << >>).
 
 %% -----------------------------------------------------------------------------
-%% @doc Configures an inbound stream 
-%%
+%% @doc Configures an inbound stream, setting up the transport for the channel 
+%%      and organizing all of the registrations.
 %% @end
 %% -----------------------------------------------------------------------------
+-spec configure_channel(Config :: ems_config:handle(), 
+                        User :: term(),
+                        Conn :: rtsp:conn(),
+                        TransportSpec :: [term()]) -> term().
+                        
 configure_channel(Channel, User, Conn, TransportSpec) ->
   {ok, Transport} = create_transport(Conn, TransportSpec),
-  ems_channel:configure_input(Channel, Transport)
+  ems_channel:configure_input(Channel, Transport).
 
+-spec create_transport(Conn :: rtsp:conn(), 
+                       TransportSpec :: ems:transport_spec()) ->
+  {ok, rtp:transport()} | {error, Reason :: term()}.
+
+create_transport(Conn, TransportSpec) ->
+  case  lists:keysearch(interleaved, 1, TransportSpec) of 
+    {value, {interleaved, [Rtp,Rtcp]}} ->
+        rtp_transport:new(rtsp_rtp_transport, {Conn, Rtp, Rtcp});
+
+    _ -> {error, unsupported_transport}
+  end.
+    
 %% -----------------------------------------------------------------------------
 %%
 %% -----------------------------------------------------------------------------

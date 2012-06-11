@@ -1,0 +1,3 @@
+#!/bin/bash
+./rebar compile
+erl -smp enable -pa apps/logger/ebin -pa apps/utils/ebin -pa apps/listener/ebin -pa apps/rtsp/ebin -pa apps/ems/ebin -pz apps/utils/test -pz apps/ems/test -pz apps/rtsp/test -pz apps/rtsp/include -boot start_sasl -run appmon -run debugger

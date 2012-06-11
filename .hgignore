@@ -7,5 +7,6 @@ syntax: glob
 session.vim
 doc/*
 deps/*
+logs/*
 .DS_Store
 .eunit

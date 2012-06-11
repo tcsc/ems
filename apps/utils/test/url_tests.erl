@@ -24,9 +24,17 @@ parse_http_default_port_test() ->
 parse_unknown_scheme_test() ->
   ?assertEqual({error,unknown}, url:parse("narf://something@strange")).
 
+parse_unrooted_test() ->
+  ?assertEqual({rtsp, "some.server.org", 554, "/"}, 
+               url:parse("rtsp://some.server.org")). 
+
 simple_concat_test() ->
   ?assertEqual("http://localhost/root/leaf", 
                url:join("http://localhost/root", "leaf")).
+
+empty_concat_test() ->
+  ?assertEqual("http://localhost/root", 
+               url:join("http://localhost/root", "")).
 
 trailing_separator_test() ->
   ?assertEqual("http://localhost/root/leaf", 
@@ -35,3 +43,4 @@ trailing_separator_test() ->
 query_string_test() ->
   ?assertEqual("http://localhost/root?name=value",
                url:join("http://localhost/root", "?name=value")).
+

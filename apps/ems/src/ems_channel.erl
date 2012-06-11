@@ -15,7 +15,7 @@
 % public API exports ----------------------------------------------------------
 -export ([start_link/4,
           get_path/1,
-          configure_input/3, 
+          configure_input/2, 
           activate/1, 
           stop/1]).
 
@@ -45,33 +45,33 @@
         {ok, pid(), term()} | error.
 
 start_link(Path, Stream, RtpMap, Parent) ->
-	log:debug("ems_channel:start_link/3 - creating channel"),
-	State = #state{parent = Parent, 
+  log:debug("ems_channel:start_link/3 - creating channel"),
+  State = #state{parent = Parent, 
                  path = Path, 
                  stream = Stream, 
                  rtp_map = RtpMap},
 
-	case gen_server:start_link(?MODULE, State, []) of
-		{ok, Pid} -> {ok, Pid};
-		Error -> 
-			log:err("ems_channel:start_link/4 failed to start: ~w", [Error]),
-			Error
-	end.
+  case gen_server:start_link(?MODULE, State, []) of
+    {ok, Pid} -> {ok, Pid};
+    Error -> 
+      log:err("ems_channel:start_link/4 failed to start: ~w", [Error]),
+      Error
+  end.
 
 %% ----------------------------------------------------------------------------
 %% @doc Configures the channel with the given settings. I still need to work 
 %%      out exactly what it is I need to know at this point... 
 %% @end 
 %% ----------------------------------------------------------------------------
--spec configure_input(pid(), term(), term()) -> {ok, ems:transport_spec()}. 
+-spec configure_input(pid(), term()) -> {ok, ems:transport_spec()}. 
 
-configure_input(Channel, Transpor) ->
+configure_input(Channel, Transport) ->
   try
     log:debug("ems_channel:configure_input/3", []),
-    gen_server:call(Pid, {configure, Transport})
+    gen_server:call(Channel, {configure, Transport})
   catch
     exit:{timeout,_} -> {error, timeout};
-	  _Type:Err -> {error, Err}
+    _Type:Err -> {error, Err}
   end.
 
 -spec activate(Channel :: ems:channel()) -> ok | {error, Reason::term()}.
@@ -112,15 +112,14 @@ init(State = #state{path = Path}) ->
 -spec handle_call(call_request(), From :: pid(), State :: state()) ->
   {reply, Reply :: term(), NewState :: state()}.
 
-handle_call({configure, TransportSpec}, _From, State) ->
+handle_call({configure, Transport}, _From, State) ->
   log:debug("ems_channel:handle_call/3 - handling stream configure", []),
 
   {_,RtpInfo} = State#state.rtp_map,
-  
+
   {RtpReceiverPid, ServerTransportSpec} = 
     rtp_receiver:start_link(RtpInfo#rtp_map.clock_rate, 
-                            TransportSpec, 
-                            ClientAddress),
+                            Transport),
                           
   log:debug("ems_channel:handle_call/3 - Server Transport Spec: ~w", 
             [ServerTransportSpec]),  

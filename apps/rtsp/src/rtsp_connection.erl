@@ -8,9 +8,12 @@
 %% ============================================================================
 -export([new/3, 
          close/1,
+         add_disconnection_handler/2,
          create_channels/2,
          write_channel/2,
          channel_index/1,
+         active_channels/1,
+         set_channel_handler/2,
          take_socket/2, 
          get_client_address/1, 
          send_response/5, 
@@ -20,11 +23,11 @@
 %% gen_fsm exports
 %% ============================================================================
 -export([init/1,
-    handle_event/3,
-    handle_info/3,
-    handle_sync_event/4,
-    terminate/3,
-    code_change/4]).
+         handle_event/3,
+         handle_info/3,
+         handle_sync_event/4,
+         terminate/3,
+         code_change/4]).
 
 %% ============================================================================
 %% machine state exports
@@ -45,6 +48,7 @@
 %% ============================================================================
 
 -type buffer_handler() :: fun((binary())->any()).
+-type nullary_function() :: fun(()->any()).
 -record(channel, {queue = queue:new() :: queue(),
                   handler             :: buffer_handler()} ).
 -type channel() :: {rtsp:conn(), integer()}.
@@ -64,7 +68,10 @@
                  channels = array:new()      :: array(),
                  last_channel = -1           :: integer(),
                  message_queue = queue:new() :: queue(),
-                 sender_waiting = false      :: boolean()
+                 sender_waiting = false      :: boolean(),
+                 disconnection_handlers = [] :: [{integer(), 
+                                                  nullary_function()}],
+                 id_seed = 0                 :: integer()
                }).
 
 -define(SP,16#20).
@@ -91,12 +98,17 @@ new(_Owner, ServerStr, Callback) ->
 
 
 %% ----------------------------------------------------------------------------
-%% @doc Closes a connection and shuts down the socket. 
+%% @doc Closes a connection and shuts down the socket. Closing a non-existent 
+%%      connection is not considered an error.
 %% @end 
 %% ----------------------------------------------------------------------------
 close(Conn) ->
-  gen_fsm:sync_send_all_state_event(Conn, quit).
+  catch gen_fsm:sync_send_all_state_event(Conn, quit),
+  ok.
 
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
 take_socket(Conn, Socket) ->
   log:debug("rtsp_connection:take_socket/2 - reassigning socket ownership to ~w", 
             [Conn]),
@@ -106,6 +118,9 @@ take_socket(Conn, Socket) ->
   gen_fsm:send_event(Conn, {socket, Socket}),
   ok.
 
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
 get_client_address(Conn) ->
   gen_fsm:sync_send_all_state_event(Conn, get_client_address, ?timeout).
 
@@ -128,18 +143,45 @@ create_channels(Conn, Indices) ->
   gen_fsm:sync_send_all_state_event(Conn, {create_channels, Indices}, ?timeout).
 
 %% ----------------------------------------------------------------------------
+%% @doc Returns the index of the specified channel.
+%% @end
 %% ----------------------------------------------------------------------------
 -spec channel_index(channel()) -> integer().
 channel_index({_,Index}) -> 
-  Index. 
+  Index.
+
+set_channel_handler({Conn,Index}, Handler) ->
+ gen_fsm:sync_send_all_state_event(Conn, 
+                                   {set_channel_handler, Index, Handler},
+                                   ?timeout).
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+-spec active_channels(rtsp:conn()) -> [integer()].
+active_channels(Conn) -> 
+  gen_fsm:sync_send_all_state_event(Conn, get_active_channels, ?timeout).
 
 %% ----------------------------------------------------------------------------
 %% @doc Writes a data packet to the supplied channel
 %% @end
 %% ----------------------------------------------------------------------------
--spec write_channel(channel(), binary()) -> ok | {error, term()}.
+-spec write_channel(Channel::channel(), Data::binary()) -> ok | {error, term()}.
 write_channel({Conn, Index}, Data) ->
   gen_fsm:send_all_state_event(Conn, {write_channel, Index, Data}).
+
+%% ----------------------------------------------------------------------------
+%% @doc Registers a callback function to be invoked when the connection is
+%%      lost. Returns a cookie value uniquely identifying the registration.
+%% @end 
+%% ----------------------------------------------------------------------------
+-spec add_disconnection_handler(rtsp:conn(), nullary_function()) ->
+        Cookie :: term().
+
+add_disconnection_handler(Conn, Handler) ->
+  gen_fsm:sync_send_all_state_event(Conn, 
+                                    {add_disconnection_handler, Handler},
+                                    ?timeout).
 
 %% ============================================================================
 %% gen_fsm API
@@ -254,8 +296,33 @@ handle_sync_event({create_channels, Indices}, _From, StateName, State) ->
       {reply, {ok, NewChannels}, StateName, NewState};
     Err ->
       {reply, Err, StateName, State}
-  end;  
+  end;
+
+handle_sync_event({set_channel_handler, Index, Handler}, 
+                  _From, 
+                  StateName, 
+                  State) ->
+  {Result, StateP} = 
+    case set_channel_handler(Index, Handler, State) of
+      {ok, NewState} -> {ok, NewState};
+      Err -> {Err, State}
+    end,
+  {reply, Result, StateName, StateP};
    
+handle_sync_event(get_active_channels, _From, StateName, State) ->
+  Channels = State#state.channels,
+  Result = array:sparse_foldl(fun(Idx,_,A) -> [Idx|A] end, [], Channels),
+  {reply, lists:reverse(Result), StateName, State};
+
+handle_sync_event({add_disconnection_handler, Handler}, 
+                  _From, 
+                  StateName, 
+                  State = #state{id_seed = Id, 
+                                 disconnection_handlers = Handlers} ) ->
+  HandlersP = [{Id, Handler} | Handlers],
+  StateP = State#state{id_seed = Id + 1, disconnection_handlers = HandlersP},
+  {reply, Id, StateName, StateP}; 
+
 handle_sync_event(quit, _, _, State) ->
   log:debug("rtsp_connection:handle_sync_event/4 - quit"),
   {stop, normal, ok, State};
@@ -267,9 +334,16 @@ handle_sync_event(_Event, _From, StateName, StateData) ->
 %% ----------------------------------------------------------------------------
 %%
 %% ----------------------------------------------------------------------------
-terminate(_Reason, _StateName, State) ->
+terminate(_Reason, 
+          _StateName, 
+          _State = #state{sender = Sender, 
+                          disconnection_handlers = Callbacks,
+                          channels = Channels}) ->
   log:debug("rtsp_connection:terminate/3 - ~w", [_Reason]),
-  Sender = State#state.sender,
+  lists:foreach(fun({_,Callback}) -> Callback() end, Callbacks),
+  utils:array_sparse_foreach(
+    fun(#channel{handler = F}) -> F(<< >>) end,
+    Channels),
   stop_sender(Sender),
   ok.
 
@@ -510,16 +584,17 @@ handle_data(Data, StateData, _State) ->
   log:trace("rtsp_connection:handle_data/3 - ~w ~w", [StateData,_State]),
   {ok, ready, StateData, Data}.
 
-
 %% ----------------------------------------------------------------------------
 %% @doc Delivers a packet to the registered callback   
 %% @end
 %% ----------------------------------------------------------------------------
 deliver_packet(#state{channels = Channels} = _State, ChannelIndex, Buffer) ->
   case array:get(ChannelIndex, Channels) of
-    Channel when is_record(Channel, channel) -> 
-      Handler = Channel#channel.handler,
-      Handler(Buffer);
+    Channel when is_record(Channel, channel) ->
+      case Channel#channel.handler of 
+        undefined -> ok;
+        Handler -> Handler(Buffer)
+      end;
 
     undefined -> 
       log:warning("Received packet on unregistered channel ~w", [ChannelIndex]);
@@ -701,6 +776,33 @@ register_channels(Conn, [Channel|Rest], State, NewChannels) ->
         _ -> 
           {error, "Channel index in use"}
       end
+  end.
+
+%% ----------------------------------------------------------------------------
+%%
+%% ----------------------------------------------------------------------------
+
+-spec set_channel_handler(Index :: integer(),
+                          Handler :: buffer_handler(),
+                          State :: #state{} ) ->
+  {ok, NewState :: #state{}} | 
+  {error, Reason :: invalid_channel_index | no_such_channel}.
+
+set_channel_handler(Index, _Handler, _State) when Index > 255 ->
+  {error, invalid_channel_index};
+
+set_channel_handler(Index, _Handler, _State) when Index < 0 ->
+  {error, invalid_channel_index};
+
+set_channel_handler(Index, Handler, State) ->
+  Channels = State#state.channels,
+  case array:get(Index, Channels) of 
+    undefined -> {error, no_such_channel};
+    Channel ->
+      ChannelP = Channel#channel{handler = Handler},
+      ChannelsP = array:set(Index, ChannelP, Channels),
+      StateP = State#state{channels = ChannelsP},
+      {ok, StateP}
   end.
 
 %% ----------------------------------------------------------------------------
