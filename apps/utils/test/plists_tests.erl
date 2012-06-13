@@ -1,4 +1,4 @@
--module(plist_tests).
+-module(plists_tests).
 -include_lib("eunit/include/eunit.hrl").
 
 check_pmap(I, [{N,Pid}|T]) ->
