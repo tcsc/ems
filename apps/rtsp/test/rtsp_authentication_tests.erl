@@ -1,4 +1,4 @@
--module (authentication_tests).
+-module (rtsp_authentication_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("digest.hrl").
 -include("rtsp.hrl").

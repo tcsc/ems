@@ -342,7 +342,12 @@ terminate(_Reason,
   log:debug("rtsp_connection:terminate/3 - ~w", [_Reason]),
   lists:foreach(fun({_,Callback}) -> Callback() end, Callbacks),
   utils:array_sparse_foreach(
-    fun(#channel{handler = F}) -> F(<< >>) end,
+    fun(Channel) -> 
+      case Channel#channel.handler of 
+        undefined -> ok;
+        F -> F(<< >>) 
+      end
+    end,
     Channels),
   stop_sender(Sender),
   ok.
